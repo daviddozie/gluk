@@ -1,6 +1,5 @@
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { mastra } from "@/mastra";
 import { NextRequest } from "next/server";
 
 export const runtime = "nodejs";
@@ -18,16 +17,15 @@ export async function POST(req: NextRequest) {
         return new Response("Message is required", { status: 400 });
     }
 
+    // Lazy import Mastra — only at runtime, never at build time
+    const { mastra } = await import("@/mastra");
     const agent = mastra.getAgent("glukAgent");
     const resourceId = session.user.email ?? session.user.name ?? "anonymous";
 
     const encoder = new TextEncoder();
-
-    // Use TransformStream to flush each chunk immediately to the client
     const { readable, writable } = new TransformStream();
     const writer = writable.getWriter();
 
-    // Start streaming in background — don't await so response returns immediately
     (async () => {
         try {
             const response = await agent.stream(message, {
