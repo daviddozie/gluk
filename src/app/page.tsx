@@ -18,6 +18,7 @@ export default function Home() {
     const isDesktop = window.innerWidth >= 768;
     if (isDesktop) setSidebarOpen(true);
   }, []);
+  
   const [isLoadingConversations, setIsLoadingConversations] = useState(true);
   const abortControllerRef = useRef<AbortController | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
