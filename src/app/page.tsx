@@ -189,13 +189,13 @@ export default function Home() {
         <div className="fixed inset-0 bg-black/60 z-20 md:hidden" onClick={() => setSidebarOpen(false)} />
       )}
 
-      {/* Sidebar */}
+      {/* Sidebar — fixed drawer on mobile, static on desktop */}
       <div className={`
-        fixed md:static inset-y-0 left-0 z-30
+        fixed md:static top-0 bottom-0 left-0 z-30
         transform transition-transform duration-300 ease-in-out
-        ${sidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}
         w-[260px] flex-shrink-0
-        ${!sidebarOpen ? "md:hidden" : ""}
+        ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}
+        ${!sidebarOpen ? "md:hidden" : "md:translate-x-0"}
       `}>
         <Sidebar
           conversations={conversations}
