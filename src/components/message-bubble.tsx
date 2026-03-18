@@ -76,21 +76,47 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
   };
 
   return (
-    <div className={`flex gap-3 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
+    <div className={`flex gap-2 sm:gap-3 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
       {/* Avatar */}
-      <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold ${
-        isUser
-          ? "bg-white text-black"
-          : "bg-white/[0.06] border border-white/[0.1]"
-      }`}>
-        {isUser ? getInitials() : <GlukLogo size={18} />}
+      <div className={`flex-shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-xs font-semibold ${isUser
+        ? "bg-white text-black"
+        : "bg-white/[0.06] border border-white/[0.1]"
+        }`}>
+        {isUser ? getInitials() : <GlukLogo size={16} />}
       </div>
 
       {/* Content */}
-      <div className={`flex flex-col gap-1 max-w-[85%] ${isUser ? "items-end" : "items-start"}`}>
+      <div className={`flex flex-col gap-1 max-w-[88%] sm:max-w-[85%] ${isUser ? "items-end" : "items-start"}`}>
         {isUser ? (
-          <div className="bg-white/[0.08] border border-white/[0.08] rounded-2xl rounded-tr-sm px-4 py-3 text-sm text-white/90 leading-relaxed">
-            {message.content}
+          <div className="flex flex-col gap-2 items-end">
+            {/* File attachments */}
+            {message.files && message.files.length > 0 && (
+              <div className="flex flex-wrap gap-2 justify-end">
+                {message.files.map((f, i) => (
+                  <div key={i} className="w-16 h-16 rounded-xl overflow-hidden border border-white/[0.1] bg-white/[0.05] flex items-center justify-center flex-shrink-0">
+                    {f.type.startsWith("image/") ? (
+                      <img src={f.url} alt={f.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="flex flex-col items-center gap-1 px-1">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/60">
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                          <polyline points="14 2 14 8 20 8" />
+                        </svg>
+                        <span className="text-[9px] text-white/40 truncate w-full text-center">
+                          {f.name.length > 7 ? f.name.slice(0, 6) + "…" : f.name}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* Message text */}
+            {message.content && (
+              <div className="bg-white/[0.08] border border-white/[0.08] rounded-2xl rounded-tr-sm px-4 py-3 text-sm text-white/90 leading-relaxed">
+                {message.content}
+              </div>
+            )}
           </div>
         ) : (
           <div className="text-sm text-white/85 leading-relaxed w-full">

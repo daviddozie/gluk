@@ -46,6 +46,13 @@ export const glukAgent = new Agent({
 - Anything that may have changed recently
 - Questions about specific people, companies, products
 
+## When documents are provided:
+- The user may upload documents (PDF, CSV, TXT, DOCX) for you to analyze
+- Relevant excerpts from those documents will appear in the message under "Relevant document context"
+- Always prioritize document context when answering questions about uploaded files
+- Reference the document name when citing information from it
+- If the document context doesn't contain the answer, say so clearly
+
 ## Guidelines:
 - Always use web search when the user asks about something current or recent
 - After searching, synthesize the results into a clear, helpful answer

@@ -3,25 +3,24 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import Sidebar from "@/components/sidebar";
 import ChatWindow from "@/components/chat-window";
-import ChatInput from "@/components/chat-input";
+import ChatInput, { AttachedFile } from "@/components/chat-input";
 import { Message, Conversation } from "@/types/chat";
 import { nanoid } from "nanoid";
+import ChatSkeleton from "@/components/chat-skeleton";
 
 export default function Home() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-
-  // Open sidebar by default on desktop
-  useEffect(() => {
-    const isDesktop = window.innerWidth >= 768;
-    if (isDesktop) setSidebarOpen(true);
-  }, []);
-  
   const [isLoadingConversations, setIsLoadingConversations] = useState(true);
   const abortControllerRef = useRef<AbortController | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Open sidebar by default on desktop
+  useEffect(() => {
+    if (window.innerWidth >= 768) setSidebarOpen(true);
+  }, []);
 
   const activeConversation = conversations.find((c) => c.id === activeConversationId) ?? null;
 
@@ -57,7 +56,8 @@ export default function Home() {
           const data = await res.json();
           if (data.conversations?.length > 0) {
             setConversations(data.conversations);
-            setActiveConversationId(data.conversations[0].id);
+            // Always start with a fresh new chat
+            createNewConversation();
           } else {
             createNewConversation();
           }
@@ -71,13 +71,23 @@ export default function Home() {
     load();
   }, []);
 
-  const handleSend = async (content: string) => {
+  const handleSend = async (content: string, files?: AttachedFile[]) => {
     if (!content.trim() || isStreaming) return;
 
     let convId = activeConversationId;
     if (!convId) convId = createNewConversation();
 
-    const userMessage: Message = { id: nanoid(), role: "user", content, createdAt: new Date() };
+    const userMessage: Message = {
+      id: nanoid(),
+      role: "user",
+      content,
+      createdAt: new Date(),
+      files: files?.map((f) => ({
+        name: f.file.name,
+        type: f.file.type,
+        url: f.preview ?? "",
+      })),
+    };
     const assistantMessage: Message = { id: nanoid(), role: "assistant", content: "", createdAt: new Date(), isStreaming: true };
 
     const conv = conversations.find((c) => c.id === convId);
@@ -96,10 +106,59 @@ export default function Home() {
     abortControllerRef.current = new AbortController();
 
     try {
+      // Upload files to Cloudinary first if any
+      let uploadedFiles: { name: string; type: string; url: string }[] = [];
+      if (files && files.length > 0) {
+        const formData = new FormData();
+        files.forEach((f) => formData.append("files", f.file));
+        const uploadRes = await fetch("/api/upload", {
+          method: "POST",
+          body: formData,
+        });
+        if (uploadRes.ok) {
+          const uploadData = await uploadRes.json();
+          uploadedFiles = uploadData.files;
+          // Update user message with real Cloudinary URLs
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.id === convId
+                ? {
+                  ...c,
+                  messages: c.messages.map((m) =>
+                    m.id === userMessage.id
+                      ? {
+                        ...m,
+                        files: uploadedFiles.map((f: { name: string; type: string; url: string }) => ({
+                          name: f.name,
+                          type: f.type,
+                          url: f.url,
+                        })),
+                      }
+                      : m
+                  ),
+                }
+                : c
+            )
+          );
+        }
+
+        // Ingest documents into Pinecone (skip images)
+        const docFiles = files.filter((f) => !f.file.type.startsWith("image/"));
+        if (docFiles.length > 0) {
+          const ingestForm = new FormData();
+          docFiles.forEach((f) => ingestForm.append("files", f.file));
+          ingestForm.append("conversationId", convId!);
+          await fetch("/api/ingest", {
+            method: "POST",
+            body: ingestForm,
+          });
+        }
+      }
+
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: content, threadId: convId }),
+        body: JSON.stringify({ message: content, threadId: convId, files: uploadedFiles }),
         signal: abortControllerRef.current.signal,
       });
 
@@ -123,7 +182,6 @@ export default function Home() {
         );
       }
 
-      // Mark done + save
       setConversations((prev) => {
         const updated = prev.map((c) =>
           c.id === convId
@@ -176,40 +234,41 @@ export default function Home() {
   };
 
   if (isLoadingConversations) {
-    return (
-      <div className="flex h-screen bg-[#0a0a0a] items-center justify-center">
-        <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-      </div>
-    );
+    return <ChatSkeleton />;
   }
+
+  const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
 
   return (
     <div className="flex h-screen bg-[#0a0a0a] text-white overflow-hidden relative">
+
       {/* Mobile overlay */}
-      {sidebarOpen && (
-        <div className="fixed inset-0 bg-black/60 z-20 md:hidden" onClick={() => setSidebarOpen(false)} />
+      {sidebarOpen && isMobile && (
+        <div
+          className="fixed inset-0 bg-black/60 z-20"
+          onClick={() => setSidebarOpen(false)}
+        />
       )}
 
-      {/* Sidebar — fixed drawer on mobile, static on desktop */}
-      <div className={`
-        fixed md:static top-0 bottom-0 left-0 z-30
-        transform transition-transform duration-300 ease-in-out
-        w-[260px] flex-shrink-0
-        ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}
-        ${!sidebarOpen ? "md:hidden" : "md:translate-x-0"}
-      `}>
-        <Sidebar
-          conversations={conversations}
-          activeConversationId={activeConversationId}
-          onSelect={handleSelectConversation}
-          onNew={createNewConversation}
-          onDelete={handleDeleteConversation}
-          isOpen={sidebarOpen}
-          onToggle={() => setSidebarOpen((v) => !v)}
-        />
-      </div>
+      {/* Sidebar */}
+      {sidebarOpen && (
+        <div className={`
+          z-30 w-[260px] flex-shrink-0 h-full
+          ${isMobile ? "fixed top-0 left-0 bottom-0" : "relative"}
+        `}>
+          <Sidebar
+            conversations={conversations}
+            activeConversationId={activeConversationId}
+            onSelect={handleSelectConversation}
+            onNew={createNewConversation}
+            onDelete={handleDeleteConversation}
+            isOpen={sidebarOpen}
+            onToggle={() => setSidebarOpen((v) => !v)}
+          />
+        </div>
+      )}
 
-      {/* Main content */}
+      {/* Main content — always full width on mobile */}
       <div className="flex flex-col flex-1 min-w-0 w-full">
         <div className="flex items-center h-14 px-4 border-b border-white/[0.06]">
           <button

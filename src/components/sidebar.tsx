@@ -3,6 +3,15 @@
 import { useSession, signOut } from "next-auth/react";
 import { Conversation } from "@/types/chat";
 import GlukLogo from "./svg";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuLabel,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Settings, HelpCircle, LogOut, ChevronUp } from "lucide-react";
 
 interface SidebarProps {
     conversations: Conversation[];
@@ -79,10 +88,7 @@ export default function Sidebar({
                                 <span className="text-xs truncate">{conv.title}</span>
                             </div>
                             <button
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    onDelete(conv.id);
-                                }}
+                                onClick={(e) => { e.stopPropagation(); onDelete(conv.id); }}
                                 className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-white/[0.1] transition-all text-white/40 hover:text-white/80 flex-shrink-0"
                             >
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -94,40 +100,80 @@ export default function Sidebar({
                 )}
             </div>
 
-            {/* Footer */}
-            <div className="p-3 border-t border-white/[0.06]">
-                <div className="flex items-center justify-between px-2 py-2 rounded-lg hover:bg-white/[0.06] transition-colors group">
-                    <div className="flex items-center gap-2 min-w-0">
-                        {session?.user?.image ? (
-                            <img
-                                src={session.user.image}
-                                alt="avatar"
-                                className="w-7 h-7 rounded-full flex-shrink-0"
-                            />
-                        ) : (
-                            <div className="w-7 h-7 rounded-full bg-white/10 flex items-center justify-center flex-shrink-0">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                                    <circle cx="12" cy="7" r="4" />
-                                </svg>
+            {/* Footer with dropdown */}
+            <div className="p-2 border-t border-white/[0.06]">
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                        <button className="w-full flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-white/[0.06] transition-colors group">
+                            {session?.user?.image ? (
+                                <img
+                                    src={session.user.image}
+                                    alt="avatar"
+                                    className="w-7 h-7 rounded-full flex-shrink-0"
+                                />
+                            ) : (
+                                <div className="w-7 h-7 rounded-full bg-white/10 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-white">
+                                    {session?.user?.name?.[0]?.toUpperCase() ?? "U"}
+                                </div>
+                            )}
+                            <div className="flex-1 text-left min-w-0">
+                                <p className="text-xs font-medium text-white truncate">
+                                    {session?.user?.name ?? "Guest"}
+                                </p>
                             </div>
-                        )}
-                        <span className="text-xs text-white/60 truncate">
-                            {session?.user?.name ?? session?.user?.email ?? "Guest"}
-                        </span>
-                    </div>
-                    <button
-                        onClick={() => signOut({ callbackUrl: "/login" })}
-                        className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-white/[0.1] transition-all text-white/40 hover:text-white/80"
-                        title="Sign out"
+                            <ChevronUp className="w-3.5 h-3.5 text-white/40 flex-shrink-0" />
+                        </button>
+                    </DropdownMenuTrigger>
+
+                    <DropdownMenuContent
+                        side="top"
+                        align="start"
+                        className="w-[240px] bg-[#1a1a1a] border-white/[0.08] text-white mb-1"
                     >
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                            <polyline points="16 17 21 12 16 7" />
-                            <line x1="21" y1="12" x2="9" y2="12" />
-                        </svg>
-                    </button>
-                </div>
+                        {/* User info */}
+                        <DropdownMenuLabel className="py-2">
+                            <div className="flex items-center gap-2">
+                                {session?.user?.image ? (
+                                    <img src={session.user.image} alt="avatar" className="w-8 h-8 rounded-full" />
+                                ) : (
+                                    <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm font-semibold">
+                                        {session?.user?.name?.[0]?.toUpperCase() ?? "U"}
+                                    </div>
+                                )}
+                                <div className="min-w-0">
+                                    <p className="text-sm font-medium text-white truncate">
+                                        {session?.user?.name ?? "Guest"}
+                                    </p>
+                                    <p className="text-xs text-white/40 truncate">
+                                        {session?.user?.email ?? ""}
+                                    </p>
+                                </div>
+                            </div>
+                        </DropdownMenuLabel>
+
+                        <DropdownMenuSeparator className="bg-white/[0.06]" />
+
+                        <DropdownMenuItem className="gap-2 text-white/70 hover:text-white focus:text-white focus:bg-white/[0.06] cursor-pointer">
+                            <Settings className="w-4 h-4" />
+                            Settings
+                        </DropdownMenuItem>
+
+                        <DropdownMenuItem className="gap-2 text-white/70 hover:text-white focus:text-white focus:bg-white/[0.06] cursor-pointer">
+                            <HelpCircle className="w-4 h-4" />
+                            Help
+                        </DropdownMenuItem>
+
+                        <DropdownMenuSeparator className="bg-white/[0.06]" />
+
+                        <DropdownMenuItem
+                            onClick={() => signOut({ callbackUrl: "/login" })}
+                            className="gap-2 text-white/70 hover:text-white focus:text-white focus:bg-white/[0.06] cursor-pointer"
+                        >
+                            <LogOut className="w-4 h-4" />
+                            Log out
+                        </DropdownMenuItem>
+                    </DropdownMenuContent>
+                </DropdownMenu>
             </div>
         </div>
     );
