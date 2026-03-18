@@ -30,12 +30,39 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env.local
-
 # vercel
 .vercel
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# dependencies
+node_modules/
+
+# next.js
+.next/
+out/
+
+# environment
+.env
+.env.local
+.env.*.local
+
+# mastra
+.mastra/
+
+# database
+*.db
+*.db-shm
+*.db-wal
+
+# logs
+*.log
+
+# system files
+.DS_Store
+Thumbs.db
+
+# typescript
+*.tsbuildinfo
