@@ -4,9 +4,24 @@ import { z } from "zod";
 export const webSearchTool = createTool({
     id: "web_search",
     description:
-        "Search the internet for current, real-time information. Use this for any question about recent events, news, facts, people, places, products, or anything that requires up-to-date information.",
+        "Search the internet for current, real-time information. Use this for any question about recent events, news, facts, people, places, products, or anything that requires up-to-date information. For deep research queries, call this multiple times with different query angles (e.g. different phrasings, subtopics, or time ranges).",
     inputSchema: z.object({
-        query: z.string().describe("The search query"),
+        query: z.string().describe("The search query. Be specific — narrow queries return better results than broad ones."),
+        depth: z
+            .enum(["basic", "advanced"])
+            .optional()
+            .default("advanced")
+            .describe("Search depth. Use 'advanced' for research tasks to get richer content."),
+        maxResults: z
+            .number()
+            .optional()
+            .default(8)
+            .describe("Maximum number of results to return (default 8 for research, lower for quick lookups)."),
+        includeImages: z
+            .boolean()
+            .optional()
+            .default(false)
+            .describe("Whether to include image URLs in results."),
     }),
     outputSchema: z.object({
         results: z.array(
@@ -14,20 +29,28 @@ export const webSearchTool = createTool({
                 title: z.string(),
                 url: z.string(),
                 content: z.string(),
+                publishedDate: z.string().optional(),
+                score: z.number().optional(),
             })
         ),
         answer: z.string().optional(),
+        query: z.string(),
+        searchedAt: z.string(),
     }),
-    execute: async ({ query }) => {
+    execute: async ({ query, depth = "advanced", maxResults = 8, includeImages = false }) => {
+        const searchedAt = new Date().toISOString();
+
         const response = await fetch("https://api.tavily.com/search", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 api_key: process.env.TAVILY_API_KEY,
                 query,
-                search_depth: "basic",
+                search_depth: depth,
                 include_answer: true,
-                max_results: 5,
+                include_images: includeImages,
+                include_raw_content: false,
+                max_results: maxResults,
             }),
         });
 
@@ -38,12 +61,18 @@ export const webSearchTool = createTool({
         const data = await response.json();
 
         return {
+            query,
+            searchedAt,
             answer: data.answer ?? "",
-            results: (data.results ?? []).map((r: { title: string; url: string; content: string }) => ({
-                title: r.title,
-                url: r.url,
-                content: r.content,
-            })),
+            results: (data.results ?? []).map(
+                (r: { title: string; url: string; content: string; published_date?: string; score?: number }) => ({
+                    title: r.title,
+                    url: r.url,
+                    content: r.content,
+                    publishedDate: r.published_date,
+                    score: r.score,
+                })
+            ),
         };
     },
 });

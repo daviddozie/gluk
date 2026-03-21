@@ -72,7 +72,8 @@ export default function Home() {
   }, []);
 
   const handleSend = async (content: string, files?: AttachedFile[]) => {
-    if (!content.trim() || isStreaming) return;
+    const hasFiles = files && files.length > 0;
+    if ((!content.trim() && !hasFiles) || isStreaming) return;
 
     let convId = activeConversationId;
     if (!convId) convId = createNewConversation();
@@ -142,23 +143,29 @@ export default function Home() {
           );
         }
 
-        // Ingest documents into Pinecone (skip images)
+        // Ingest documents into Pinecone (skip images).
+        // MUST await before sending /api/chat so the RAG search finds the chunks.
         const docFiles = files.filter((f) => !f.file.type.startsWith("image/"));
         if (docFiles.length > 0) {
           const ingestForm = new FormData();
           docFiles.forEach((f) => ingestForm.append("files", f.file));
           ingestForm.append("conversationId", convId!);
-          await fetch("/api/ingest", {
-            method: "POST",
-            body: ingestForm,
-          });
+          try {
+            await fetch("/api/ingest", {
+              method: "POST",
+              body: ingestForm,
+            });
+          } catch (ingestErr) {
+            console.error("Ingest failed:", ingestErr);
+          }
         }
       }
 
+      const chatMessage = content.trim() || "Please summarise and answer questions about the attached file(s)."
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: content, threadId: convId, files: uploadedFiles }),
+        body: JSON.stringify({ message: chatMessage, threadId: convId, files: uploadedFiles }),
         signal: abortControllerRef.current.signal,
       });
 

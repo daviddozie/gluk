@@ -7,7 +7,7 @@ async function withTimeout<T>(promise: Promise<T>, ms = 15000): Promise<T> {
     return Promise.race([promise, timeout]);
 }
 
-export async function embedText(text: string, retries = 2): Promise<number[]> {
+export async function embedText(text: string, retries = 2): Promise<number[] | null> {
     for (let attempt = 0; attempt <= retries; attempt++) {
         try {
             const response = await withTimeout(
@@ -23,7 +23,12 @@ export async function embedText(text: string, retries = 2): Promise<number[]> {
             );
 
             if (!response.ok) {
-                throw new Error(`HuggingFace API error: ${response.status} ${await response.text()}`);
+                const body = await response.text();
+                // 503 = model loading, 500 = transient HuggingFace error — log and retry
+                console.error(`HuggingFace API error: ${response.status} ${body}`);
+                if (attempt === retries) return null; // soft fail — caller decides what to do
+                await new Promise((r) => setTimeout(r, 3000 * (attempt + 1)));
+                continue;
             }
 
             const result = await response.json() as number[] | number[][];
@@ -36,15 +41,15 @@ export async function embedText(text: string, retries = 2): Promise<number[]> {
 
         } catch (err) {
             console.error(`Embedding attempt ${attempt + 1} failed:`, err);
-            if (attempt === retries) throw err;
+            if (attempt === retries) return null; // soft fail
             await new Promise((r) => setTimeout(r, 2000));
         }
     }
-    throw new Error("Embedding failed after all retries");
+    return null;
 }
 
-export async function embedBatch(texts: string[]): Promise<number[][]> {
-    const embeddings: number[][] = [];
+export async function embedBatch(texts: string[]): Promise<(number[] | null)[]> {
+    const embeddings: (number[] | null)[] = [];
     for (const text of texts) {
         const embedding = await embedText(text);
         embeddings.push(embedding);

@@ -37,39 +37,57 @@ export async function storeDocumentChunks(chunks: DocumentChunk[]) {
     const texts = chunks.map((c) => c.text);
     const embeddings = await embedBatch(texts);
 
-    const vectors = chunks.map((chunk, i) => ({
-        id: chunk.id,
-        values: embeddings[i],
-        metadata: {
-            text: chunk.text,
-            fileName: chunk.fileName,
-            fileType: chunk.fileType,
-            userEmail: chunk.userEmail,
-            conversationId: chunk.conversationId,
-            chunkIndex: chunk.chunkIndex,
-        },
-    }));
+    // Skip chunks whose embedding failed (HuggingFace transient errors)
+    const vectors = chunks
+        .map((chunk, i) => {
+            const values = embeddings[i];
+            if (!values) return null;
+            return {
+                id: chunk.id,
+                values,
+                metadata: {
+                    text: chunk.text,
+                    fileName: chunk.fileName,
+                    fileType: chunk.fileType,
+                    userEmail: chunk.userEmail,
+                    conversationId: chunk.conversationId,
+                    chunkIndex: chunk.chunkIndex,
+                },
+            };
+        })
+        .filter((v): v is NonNullable<typeof v> => v !== null);
+
+    if (vectors.length === 0) return; // nothing to upsert
 
     // Pinecone recommends batches of 100
     const batchSize = 100;
     for (let i = 0; i < vectors.length; i += batchSize) {
-        await index.upsert(vectors.slice(i, i + batchSize) as any);
+        await index.upsert(vectors.slice(i, i + batchSize) as never);
     }
 }
 
-// Search for relevant chunks
+/**
+ * Hybrid search: vector similarity + keyword overlap, then MMR deduplication.
+ * Returns the top-K most relevant AND diverse chunks.
+ */
 export async function searchSimilarChunks(
     query: string,
     userEmail: string,
     conversationId: string,
-    topK = 5
+    topK = 6
 ): Promise<{ text: string; fileName: string; score: number }[]> {
     const index = getIndex();
     const queryEmbedding = await embedText(query);
 
+    // If embedding failed (HuggingFace down), skip RAG silently
+    if (!queryEmbedding) return [];
+
+    // Fetch more than topK so MMR can diversify
+    const fetchK = Math.min(topK * 3, 20);
+
     const results = await index.query({
         vector: queryEmbedding,
-        topK,
+        topK: fetchK,
         includeMetadata: true,
         filter: {
             userEmail: { $eq: userEmail },
@@ -77,13 +95,92 @@ export async function searchSimilarChunks(
         },
     });
 
-    return (results.matches ?? [])
-        .filter((m) => m.score && m.score > 0.4)
+    const candidates = (results.matches ?? [])
+        .filter((m) => m.score && m.score > 0.35) // slightly lower threshold for recall
         .map((m) => ({
             text: m.metadata?.text as string,
             fileName: m.metadata?.fileName as string,
-            score: m.score ?? 0,
+            vectorScore: m.score ?? 0,
+            values: m.values ?? [],
         }));
+
+    if (candidates.length === 0) return [];
+
+    // Hybrid: boost by keyword overlap with query
+    const queryTerms = new Set(
+        query.toLowerCase().split(/\W+/).filter((t) => t.length > 2)
+    );
+
+    const hybrid = candidates.map((c) => {
+        const docTerms = c.text.toLowerCase().split(/\W+/);
+        const overlap = docTerms.filter((t) => queryTerms.has(t)).length;
+        const keywordScore = Math.min(overlap / Math.max(queryTerms.size, 1), 1);
+        // 70% vector, 30% keyword
+        const score = c.vectorScore * 0.7 + keywordScore * 0.3;
+        return { ...c, score };
+    });
+
+    // MMR deduplication: greedily pick diverse results
+    const selected = mmrSelect(hybrid, topK);
+
+    return selected.map((c) => ({
+        text: c.text,
+        fileName: c.fileName,
+        score: parseFloat(c.score.toFixed(4)),
+    }));
+}
+
+/**
+ * Maximal Marginal Relevance: balance relevance vs diversity.
+ * lambda=0.6 → slightly prefer relevance over novelty.
+ */
+function mmrSelect<T extends { text: string; score: number }>(
+    candidates: T[],
+    k: number,
+    lambda = 0.6
+): T[] {
+    if (candidates.length <= k) return candidates;
+
+    const selected: T[] = [];
+    const remaining = [...candidates];
+
+    while (selected.length < k && remaining.length > 0) {
+        let bestIdx = 0;
+        let bestScore = -Infinity;
+
+        for (let i = 0; i < remaining.length; i++) {
+            const relevance = remaining[i].score;
+
+            // Max similarity to already-selected chunks (simple Jaccard on words)
+            const maxSim =
+                selected.length === 0
+                    ? 0
+                    : Math.max(
+                          ...selected.map((s) => jaccardSim(remaining[i].text, s.text))
+                      );
+
+            const mmrScore = lambda * relevance - (1 - lambda) * maxSim;
+            if (mmrScore > bestScore) {
+                bestScore = mmrScore;
+                bestIdx = i;
+            }
+        }
+
+        selected.push(remaining[bestIdx]);
+        remaining.splice(bestIdx, 1);
+    }
+
+    return selected;
+}
+
+function jaccardSim(a: string, b: string): number {
+    const setA = new Set(a.toLowerCase().split(/\W+/).filter((t) => t.length > 2));
+    const setB = new Set(b.toLowerCase().split(/\W+/).filter((t) => t.length > 2));
+    if (setA.size === 0 && setB.size === 0) return 1;
+    let intersection = 0;
+    for (const t of setA) if (setB.has(t)) intersection++;
+    const union = setA.size + setB.size - intersection;
+    return union === 0 ? 0 : intersection / union;
 }
 
 // Delete all chunks for a conversation
