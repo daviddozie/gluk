@@ -16,22 +16,30 @@ export function getDB() {
 }
 
 export async function initDB() {
-    await getDB().execute(`
+    const db = getDB();
+    await db.execute(`
     CREATE TABLE IF NOT EXISTS conversations (
       id TEXT PRIMARY KEY,
       user_email TEXT NOT NULL,
       title TEXT NOT NULL,
       messages TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      pinned INTEGER NOT NULL DEFAULT 0
     )
   `);
+    // Migrate existing tables that don't yet have the pinned column
+    try {
+        await db.execute(`ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`);
+    } catch {
+        // Column already exists — ignore
+    }
 }
 
 export async function getUserConversations(userEmail: string) {
     await initDB();
     const result = await getDB().execute({
-        sql: `SELECT * FROM conversations WHERE user_email = ? ORDER BY updated_at DESC`,
+        sql: `SELECT * FROM conversations WHERE user_email = ? ORDER BY pinned DESC, updated_at DESC`,
         args: [userEmail],
     });
     return result.rows.map((row) => ({
@@ -40,6 +48,7 @@ export async function getUserConversations(userEmail: string) {
         messages: JSON.parse(row.messages as string),
         createdAt: new Date(row.created_at as string),
         updatedAt: new Date(row.updated_at as string),
+        pinned: row.pinned === 1,
     }));
 }
 
@@ -68,5 +77,12 @@ export async function deleteConversation(userEmail: string, id: string) {
     await getDB().execute({
         sql: `DELETE FROM conversations WHERE id = ? AND user_email = ?`,
         args: [id, userEmail],
+    });
+}
+
+export async function pinConversation(userEmail: string, id: string, pinned: boolean) {
+    await getDB().execute({
+        sql: `UPDATE conversations SET pinned = ? WHERE id = ? AND user_email = ?`,
+        args: [pinned ? 1 : 0, id, userEmail],
     });
 }

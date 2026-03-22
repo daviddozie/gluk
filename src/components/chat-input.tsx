@@ -16,6 +16,7 @@ interface ChatInputProps {
     onSend: (message: string, files?: AttachedFile[]) => void;
     onAbort: () => void;
     isStreaming: boolean;
+    theme: "light" | "dark";
 }
 
 function getFileType(file: File): AttachedFile["type"] {
@@ -97,7 +98,7 @@ function FilePreviewChip({ file, onRemove }: { file: AttachedFile; onRemove: () 
             {file.status !== "uploading" && (
                 <button
                     onClick={onRemove}
-                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-white/20 hover:bg-white/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-white/20 hover:bg-white/40 flex items-center justify-center opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity"
                 >
                     <X className="w-2.5 h-2.5 text-white" />
                 </button>
@@ -106,11 +107,12 @@ function FilePreviewChip({ file, onRemove }: { file: AttachedFile; onRemove: () 
     );
 }
 
-export default function ChatInput({ onSend, onAbort, isStreaming }: ChatInputProps) {
+export default function ChatInput({ onSend, onAbort, isStreaming, theme }: ChatInputProps) {
     const [input, setInput] = useState("");
     const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const isDark = theme === "dark";
 
     useEffect(() => {
         if (textareaRef.current) {
@@ -196,7 +198,11 @@ export default function ChatInput({ onSend, onAbort, isStreaming }: ChatInputPro
     return (
         <div className="px-3 sm:px-4 pb-4 sm:pb-6 pt-2">
             <div className="max-w-3xl mx-auto">
-                <div className="bg-white/[0.05] border border-white/[0.1] rounded-2xl focus-within:border-white/[0.2] transition-colors">
+                <div className={`border rounded-2xl focus-within:ring-1 transition-all duration-300 ${
+                    isDark
+                        ? "bg-white/5 border-white/10 focus-within:border-white/20 focus-within:ring-white/10"
+                        : "bg-black/4 border-black/12 focus-within:border-black/25 focus-within:ring-black/10"
+                }`}>
 
                     {attachedFiles.length > 0 && (
                         <div className="flex gap-3 px-4 pt-3 pb-1 flex-wrap">
@@ -210,7 +216,11 @@ export default function ChatInput({ onSend, onAbort, isStreaming }: ChatInputPro
                         <button
                             onClick={() => fileInputRef.current?.click()}
                             disabled={isStreaming}
-                            className="flex-shrink-0 p-1.5 rounded-lg text-white/40 hover:text-white/80 hover:bg-white/[0.08] transition-all disabled:opacity-30"
+                            className={`flex-shrink-0 p-1.5 rounded-lg cursor-pointer transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
+                                isDark
+                                    ? "text-white/40 hover:text-white/80 hover:bg-white/8"
+                                    : "text-black/40 hover:text-black/80 hover:bg-black/8"
+                            }`}
                             title="Attach file"
                         >
                             <Paperclip className="w-4 h-4" />
@@ -223,7 +233,9 @@ export default function ChatInput({ onSend, onAbort, isStreaming }: ChatInputPro
                             onKeyDown={handleKeyDown}
                             placeholder="Message Gluk..."
                             rows={1}
-                            className="flex-1 bg-transparent text-white placeholder-white/30 text-sm resize-none outline-none leading-6 max-h-[160px] overflow-y-auto"
+                            className={`flex-1 bg-transparent text-sm resize-none outline-none leading-6 max-h-[160px] overflow-y-auto transition-colors duration-300 ${
+                                isDark ? "text-white placeholder-white/30" : "text-black placeholder-black/30"
+                            }`}
                             disabled={isStreaming}
                         />
 
@@ -231,7 +243,11 @@ export default function ChatInput({ onSend, onAbort, isStreaming }: ChatInputPro
                             {isStreaming ? (
                                 <button
                                     onClick={onAbort}
-                                    className="flex items-center justify-center w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 text-white transition-all"
+                                    className={`flex items-center justify-center w-8 h-8 rounded-lg border cursor-pointer transition-all ${
+                                        isDark
+                                            ? "bg-white/10 hover:bg-white/20 border-white/20 text-white"
+                                            : "bg-black/8 hover:bg-black/15 border-black/20 text-black"
+                                    }`}
                                 >
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                                         <rect x="6" y="6" width="12" height="12" rx="2" />
@@ -241,8 +257,11 @@ export default function ChatInput({ onSend, onAbort, isStreaming }: ChatInputPro
                                 <button
                                     onClick={handleSend}
                                     disabled={!canSend}
-                                    className={`flex items-center justify-center w-8 h-8 rounded-lg transition-all ${canSend ? "bg-white text-black hover:bg-white/90" : "bg-white/10 text-white/30 cursor-not-allowed"
-                                        }`}
+                                    className={`flex items-center justify-center w-8 h-8 rounded-lg transition-all ${
+                                        canSend
+                                            ? (isDark ? "bg-white text-black hover:bg-white/90" : "bg-black text-white hover:bg-black/85")
+                                            : (isDark ? "bg-white/10 text-white/30 cursor-not-allowed" : "bg-black/8 text-black/30 cursor-not-allowed")
+                                    }`}
                                 >
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                                         <path d="M12 19V5M5 12l7-7 7 7" />
@@ -253,7 +272,9 @@ export default function ChatInput({ onSend, onAbort, isStreaming }: ChatInputPro
                     </div>
                 </div>
 
-                <p className="text-center text-white/20 text-xs mt-2 hidden sm:block">
+                <p className={`text-center text-xs mt-2 hidden sm:block transition-colors duration-300 ${
+                    isDark ? "text-white/20" : "text-black/30"
+                }`}>
                     Press Enter to send · Shift+Enter for new line
                 </p>
             </div>

@@ -5,7 +5,14 @@ interface GlukLogoProps {
 
 export default function GlukLogo({ size = 32, className = "" }: GlukLogoProps) {
     return (
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 100 100"
+            fill="none"
+            width={size}
+            height={size}
+            className={className}
+        >
             <defs>
 
                 <clipPath id="bounds">
@@ -26,7 +33,7 @@ export default function GlukLogo({ size = 32, className = "" }: GlukLogoProps) {
 
             <circle
                 cx="50" cy="50" r="33"
-                stroke="white" strokeWidth="8"
+                stroke="currentColor" strokeWidth="8"
                 mask="url(#slashMask)"
                 opacity="1"
             />
@@ -34,16 +41,16 @@ export default function GlukLogo({ size = 32, className = "" }: GlukLogoProps) {
 
             <polygon
                 points="72,10 80,18 28,90 20,82"
-                fill="white"
+                fill="currentColor"
                 opacity="1"
                 clipPath="url(#bounds)"
             />
 
 
-            <polygon points="76,6 82,12 74,14 70,8" fill="white" opacity="1" />
+            <polygon points="76,6 82,12 74,14 70,8" fill="currentColor" opacity="1" />
 
 
-            <polygon points="24,86 30,92 26,96 18,88" fill="white" opacity="1" />
+            <polygon points="24,86 30,92 26,96 18,88" fill="currentColor" opacity="1" />
 
         </svg>
     );

@@ -7,6 +7,7 @@ import ChatInput, { AttachedFile } from "@/components/chat-input";
 import { Message, Conversation } from "@/types/chat";
 import { nanoid } from "nanoid";
 import ChatSkeleton from "@/components/chat-skeleton";
+import { Moon, Sun } from "lucide-react";
 
 export default function Home() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -14,6 +15,7 @@ export default function Home() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isLoadingConversations, setIsLoadingConversations] = useState(true);
+  const [theme, setTheme] = useState<"light" | "dark">("dark");
   const abortControllerRef = useRef<AbortController | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -21,6 +23,29 @@ export default function Home() {
   useEffect(() => {
     if (window.innerWidth >= 768) setSidebarOpen(true);
   }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const storedTheme = localStorage.getItem("theme");
+    const systemPrefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const initialTheme = storedTheme === "light" || storedTheme === "dark"
+      ? storedTheme
+      : (systemPrefersDark ? "dark" : "light");
+
+    setTheme(initialTheme);
+    root.classList.add("theme-transition");
+    root.classList.toggle("dark", initialTheme === "dark");
+    root.style.colorScheme = initialTheme;
+  }, []);
+
+  const toggleTheme = () => {
+    const root = document.documentElement;
+    const nextTheme = theme === "dark" ? "light" : "dark";
+    setTheme(nextTheme);
+    localStorage.setItem("theme", nextTheme);
+    root.classList.toggle("dark", nextTheme === "dark");
+    root.style.colorScheme = nextTheme;
+  };
 
   const activeConversation = conversations.find((c) => c.id === activeConversationId) ?? null;
 
@@ -240,6 +265,28 @@ export default function Home() {
     }
   };
 
+  const handlePinConversation = async (id: string, pinned: boolean) => {
+    // Optimistic update
+    setConversations((prev) =>
+      prev
+        .map((c) => (c.id === id ? { ...c, pinned } : c))
+        .sort((a, b) => {
+          if (a.pinned && !b.pinned) return -1;
+          if (!a.pinned && b.pinned) return 1;
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        })
+    );
+    try {
+      await fetch(`/api/conversations/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pinned }),
+      });
+    } catch (err) {
+      console.error("Failed to pin:", err);
+    }
+  };
+
   if (isLoadingConversations) {
     return <ChatSkeleton />;
   }
@@ -247,7 +294,7 @@ export default function Home() {
   const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
 
   return (
-    <div className="flex h-screen bg-[#0a0a0a] text-white overflow-hidden relative">
+    <div className="flex h-screen bg-background text-foreground overflow-hidden relative transition-colors duration-300">
 
       {/* Mobile overlay */}
       {sidebarOpen && isMobile && (
@@ -260,7 +307,7 @@ export default function Home() {
       {/* Sidebar */}
       {sidebarOpen && (
         <div className={`
-          z-30 w-[260px] flex-shrink-0 h-full
+          z-30 w-65 shrink-0 h-full
           ${isMobile ? "fixed top-0 left-0 bottom-0" : "relative"}
         `}>
           <Sidebar
@@ -269,18 +316,20 @@ export default function Home() {
             onSelect={handleSelectConversation}
             onNew={createNewConversation}
             onDelete={handleDeleteConversation}
+            onPin={handlePinConversation}
             isOpen={sidebarOpen}
             onToggle={() => setSidebarOpen((v) => !v)}
+            theme={theme}
           />
         </div>
       )}
 
       {/* Main content — always full width on mobile */}
       <div className="flex flex-col flex-1 min-w-0 w-full">
-        <div className="flex items-center h-14 px-4 border-b border-white/[0.06]">
+        <div className="flex items-center h-14 px-4 border-b border-border/60 transition-colors duration-300">
           <button
             onClick={() => setSidebarOpen((v) => !v)}
-            className="mr-3 p-2 rounded-lg hover:bg-white/[0.06] transition-colors flex-shrink-0"
+            className="mr-3 p-2 rounded-lg hover:bg-black/6 dark:hover:bg-white/6 cursor-pointer transition-colors shrink-0"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="3" y1="6" x2="21" y2="6" />
@@ -288,12 +337,24 @@ export default function Home() {
               <line x1="3" y1="18" x2="21" y2="18" />
             </svg>
           </button>
-          <span className="text-sm font-medium text-white/60 truncate">
+          <span className="text-sm font-medium text-foreground/70 truncate">
             {activeConversation?.title ?? "New Chat"}
           </span>
           <button
+            onClick={toggleTheme}
+            className="ml-auto p-2 rounded-lg hover:bg-black/6 dark:hover:bg-white/6 cursor-pointer transition-all duration-300 shrink-0"
+            title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+            aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+          >
+            {theme === "dark" ? (
+              <Sun className="w-4.5 h-4.5" />
+            ) : (
+              <Moon className="w-4.5 h-4.5" />
+            )}
+          </button>
+          <button
             onClick={createNewConversation}
-            className="ml-auto p-2 rounded-lg hover:bg-white/[0.06] transition-colors flex-shrink-0"
+            className="p-2 rounded-lg hover:bg-black/6 dark:hover:bg-white/6 cursor-pointer transition-colors shrink-0"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M12 5v14M5 12h14" />
@@ -301,8 +362,8 @@ export default function Home() {
           </button>
         </div>
 
-        <ChatWindow messages={activeConversation?.messages ?? []} isLoading={isStreaming} />
-        <ChatInput onSend={handleSend} onAbort={() => abortControllerRef.current?.abort()} isStreaming={isStreaming} />
+        <ChatWindow messages={activeConversation?.messages ?? []} isLoading={isStreaming} theme={theme} />
+        <ChatInput onSend={handleSend} onAbort={() => abortControllerRef.current?.abort()} isStreaming={isStreaming} theme={theme} />
       </div>
     </div>
   );

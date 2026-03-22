@@ -18,4 +18,5 @@ export interface Conversation {
     title: string;
     messages: Message[];
     createdAt: Date;
+    pinned?: boolean;
 }
