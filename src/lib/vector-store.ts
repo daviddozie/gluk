@@ -66,10 +66,7 @@ export async function storeDocumentChunks(chunks: DocumentChunk[]) {
     }
 }
 
-/**
- * Hybrid search: vector similarity + keyword overlap, then MMR deduplication.
- * Returns the top-K most relevant AND diverse chunks.
- */
+
 export async function searchSimilarChunks(
     query: string,
     userEmail: string,
@@ -79,10 +76,8 @@ export async function searchSimilarChunks(
     const index = getIndex();
     const queryEmbedding = await embedText(query);
 
-    // If embedding failed (HuggingFace down), skip RAG silently
     if (!queryEmbedding) return [];
 
-    // Fetch more than topK so MMR can diversify
     const fetchK = Math.min(topK * 3, 20);
 
     const results = await index.query({
@@ -96,7 +91,7 @@ export async function searchSimilarChunks(
     });
 
     const candidates = (results.matches ?? [])
-        .filter((m) => m.score && m.score > 0.35) // slightly lower threshold for recall
+        .filter((m) => m.score && m.score > 0.35)
         .map((m) => ({
             text: m.metadata?.text as string,
             fileName: m.metadata?.fileName as string,
@@ -106,7 +101,6 @@ export async function searchSimilarChunks(
 
     if (candidates.length === 0) return [];
 
-    // Hybrid: boost by keyword overlap with query
     const queryTerms = new Set(
         query.toLowerCase().split(/\W+/).filter((t) => t.length > 2)
     );
@@ -115,12 +109,11 @@ export async function searchSimilarChunks(
         const docTerms = c.text.toLowerCase().split(/\W+/);
         const overlap = docTerms.filter((t) => queryTerms.has(t)).length;
         const keywordScore = Math.min(overlap / Math.max(queryTerms.size, 1), 1);
-        // 70% vector, 30% keyword
+
         const score = c.vectorScore * 0.7 + keywordScore * 0.3;
         return { ...c, score };
     });
 
-    // MMR deduplication: greedily pick diverse results
     const selected = mmrSelect(hybrid, topK);
 
     return selected.map((c) => ({
@@ -130,10 +123,6 @@ export async function searchSimilarChunks(
     }));
 }
 
-/**
- * Maximal Marginal Relevance: balance relevance vs diversity.
- * lambda=0.6 → slightly prefer relevance over novelty.
- */
 function mmrSelect<T extends { text: string; score: number }>(
     candidates: T[],
     k: number,
@@ -151,7 +140,6 @@ function mmrSelect<T extends { text: string; score: number }>(
         for (let i = 0; i < remaining.length; i++) {
             const relevance = remaining[i].score;
 
-            // Max similarity to already-selected chunks (simple Jaccard on words)
             const maxSim =
                 selected.length === 0
                     ? 0

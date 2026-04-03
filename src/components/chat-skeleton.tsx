@@ -4,8 +4,6 @@ import { useEffect, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function ChatSkeleton() {
-    // Read theme synchronously from localStorage to avoid a flash of wrong colours.
-    // Default to dark until we know the stored preference.
     const [isDark, setIsDark] = useState(true);
 
     useEffect(() => {
@@ -14,12 +12,11 @@ export default function ChatSkeleton() {
         setIsDark(stored === "light" ? false : stored === "dark" ? true : systemDark);
     }, []);
 
-    // Colour tokens derived from theme — mirrors the main app palette exactly
     const bg        = isDark ? "bg-[#0a0a0a]"   : "bg-white";
     const sidebar   = isDark ? "bg-[#111111]"   : "bg-[#f5f5f5]";
     const border    = isDark ? "border-white/6"  : "border-black/10";
-    const shimHigh  = isDark ? "bg-white/8"      : "bg-black/8";   // buttons / avatar
-    const shimLow   = isDark ? "bg-white/6"      : "bg-black/5";   // text lines / bubbles
+    const shimHigh  = isDark ? "bg-white/8"      : "bg-black/8"; 
+    const shimLow   = isDark ? "bg-white/6"      : "bg-black/5";
 
     return (
         <div className={`flex h-screen ${bg} overflow-hidden transition-colors duration-300`}>
