@@ -10,15 +10,11 @@ export interface ProcessedDocument {
     };
 }
 
-/**
- * Semantic-aware chunker: splits on paragraph/sentence boundaries first,
- * then falls back to word-count when paragraphs are too large.
- * Overlap preserves context across chunk boundaries.
- */
+
 function chunkText(
     text: string,
-    targetChunkSize = 600,   // target words per chunk
-    overlap = 80             // words to repeat across boundary
+    targetChunkSize = 600,
+    overlap = 80
 ): string[] {
     // First split into natural paragraphs
     const paragraphs = text
@@ -44,7 +40,6 @@ function chunkText(
         const words = para.split(/\s+/);
 
         if (words.length > targetChunkSize * 1.5) {
-            // Paragraph is very long — split it at sentence boundaries
             const sentences = para.match(/[^.!?]+[.!?]+/g) ?? [para];
             for (const sentence of sentences) {
                 const sentWords = sentence.trim().split(/\s+/);
@@ -75,11 +70,19 @@ export async function processDocument(
     let text = "";
 
     if (mimeType === "application/pdf") {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const pdfParse = require("pdf-parse");
-        const parsed = await pdfParse(buffer);
-        text = parsed.text;
+        if (typeof (globalThis as Record<string, unknown>).DOMMatrix === "undefined") {
+            (globalThis as Record<string, unknown>).DOMMatrix = class DOMMatrix {
+                constructor() { }
+            };
+        }
 
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { PDFParse } = require("pdf-parse") as {
+            PDFParse: new (options: { data: Buffer }) => { getText: () => Promise<{ text: string }> };
+        };
+        const parser = new PDFParse({ data: buffer });
+        const result = await parser.getText();
+        text = result.text;
     } else if (mimeType === "text/csv" || fileName.endsWith(".csv")) {
         const Papa = (await import("papaparse")).default;
         const csv = buffer.toString("utf-8");
@@ -110,7 +113,9 @@ export async function processDocument(
 
     // Normalise whitespace while preserving paragraph breaks
     text = text.replace(/[ \t]+/g, " ").replace(/\r\n/g, "\n").trim();
-
+    if (!text.includes("\n\n")) {
+        text = text.replace(/\n/g, "\n\n");
+    }
     const chunks = chunkText(text);
 
     return {

@@ -3,22 +3,18 @@ import { authOptions } from "@/lib/auth";
 import { NextRequest } from "next/server";
 
 export const runtime = "nodejs";
-export const maxDuration = 120; // extended for multi-step research
+export const maxDuration = 120;
 
-/**
- * Heuristic: treat a query as "deep research" when it shows intent to investigate
- * a topic thoroughly, not just asking a quick question.
- */
 function isResearchQuery(message: string): boolean {
     const lower = message.toLowerCase();
 
     // If the user is clearly asking about an uploaded file, skip research mode —
     // RAG will answer it without any web search needed.
     const fileKeywords = [
-        "in the file", "in the document", "in the pdf", "in the csv",
+        "in the file", "in the document", "based on the doc", "in the pdf", "in the csv",
         "from the file", "from the document", "uploaded", "attached",
         "the file says", "according to the file", "based on the file",
-        "list of", "show me the", "summarize the file", "summarise the file",
+        "list of", "show me the", "summarize the file", "summarise this file",
     ];
     if (fileKeywords.some((kw) => lower.includes(kw))) return false;
 
@@ -29,8 +25,7 @@ function isResearchQuery(message: string): boolean {
         "history of", "overview of", "latest on", "what is the current",
         "find information", "gather data", "survey", "report on",
     ];
-    // Only use research for explicit keywords — never trigger on length alone
-    // (long file questions were incorrectly triggering research mode)
+    
     return researchKeywords.some((kw) => lower.includes(kw));
 }
 
@@ -53,7 +48,7 @@ export async function POST(req: NextRequest) {
     if (threadId) {
         try {
             const { searchSimilarChunks } = await import("@/lib/vector-store");
-            const chunks = await searchSimilarChunks(message, userEmail, threadId);
+            const chunks = await searchSimilarChunks(message, threadId);
             if (chunks.length > 0) {
                 ragContext = `\n\n--- Relevant document context ---\n${chunks
                     .map((c) => `[From: ${c.fileName} | relevance: ${(c.score * 100).toFixed(0)}%]\n${c.text}`)
@@ -84,9 +79,6 @@ export async function POST(req: NextRequest) {
     const { readable, writable } = new TransformStream();
     const writer = writable.getWriter();
 
-    // If we have RAG context AND the user explicitly passed useResearch:false,
-    // or it's clearly a file question, skip the LLM entirely and return the
-    // document excerpts directly — saves the entire rate-limit quota for that turn.
     const hasRagContext = ragContext.length > 0;
     const isFileQuestion =
         useResearch === false ||
@@ -98,10 +90,9 @@ export async function POST(req: NextRequest) {
     (async () => {
         try {
             if (isFileQuestion && hasRagContext) {
-                // ── Document-only mode: answer from RAG context, no LLM call ──
                 await streamAgent(agent, fullMessage, threadId, userEmail, writer, encoder);
             } else if (shouldUseResearch) {
-                // ── Research mode: run the multi-step workflow, then stream synthesis ──
+
                 await writer.write(encoder.encode("🔍 *Starting deep research…*\n\n"));
 
                 try {
@@ -124,9 +115,7 @@ export async function POST(req: NextRequest) {
                         result?.output;
 
                     if (stepOutput?.synthesis) {
-                        // Stream the workflow synthesis directly — the workflow already
-                        // gathered, ranked and formatted everything with real citations.
-                        // Avoids a second agent LLM call (saves rate-limit quota).
+                        
                         await writer.write(encoder.encode(stepOutput.synthesis));
                     } else {
                         // Workflow returned nothing useful — fall back to agent
@@ -135,7 +124,7 @@ export async function POST(req: NextRequest) {
                 } catch (workflowErr) {
                     console.error("Research workflow error, falling back to agent:", workflowErr);
                     await writer.write(
-                        encoder.encode("⚠️ *Research pipeline hit an issue — switching to direct agent mode.*\n\n")
+                        encoder.encode("*Research pipeline hit an issue — switching to direct agent mode.*\n\n")
                     );
                     await streamAgent(agent, fullMessage, threadId, userEmail, writer, encoder);
                 }
@@ -190,7 +179,7 @@ async function streamAgent(
         if (msg.includes("429") || msg.toLowerCase().includes("rate limit")) {
             await writer.write(
                 encoder.encode(
-                    "⚠️ **Daily rate limit reached** — the free model allows 50 requests per day and today's quota is now used up.\n\n" +
+                    " **Daily rate limit reached** — the free model allows 50 requests per day and today's quota is now used up.\n\n" +
                     "The limit resets at **midnight UTC**. You can also:\n" +
                     "- Add credits on [OpenRouter](https://openrouter.ai) to unlock 1 000 req/day\n" +
                     "- Switch to a different free model in your `.env.local` (`OPENROUTER_MODEL`)\n\n" +
@@ -198,7 +187,7 @@ async function streamAgent(
                 )
             );
         } else {
-            throw err; // re-throw anything else so the outer catch handles it
+            throw err; 
         }
     }
 }

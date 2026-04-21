@@ -95,7 +95,6 @@ function computeRelevance(queryTerms: string[], docText: string): number {
     let score = 0;
     for (const term of queryTerms) {
         const tf = (docFreq.get(term) ?? 0) / totalDocTerms;
-        // Simple BM25-like boost
         score += tf * (1 + Math.log(1 + (docFreq.get(term) ?? 0)));
     }
     // Normalise to [0,1]

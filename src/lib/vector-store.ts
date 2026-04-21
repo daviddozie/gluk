@@ -13,7 +13,7 @@ function getPinecone() {
 }
 
 function getIndex() {
-    const indexName = process.env.PINECONE_INDEX ?? "gluk";
+    const indexName = process.env.PINECONE_INDEX ?? "gluk-123";
     const host = process.env.PINECONE_HOST;
     if (host) {
         return getPinecone().index(indexName, host);
@@ -37,39 +37,42 @@ export async function storeDocumentChunks(chunks: DocumentChunk[]) {
     const texts = chunks.map((c) => c.text);
     const embeddings = await embedBatch(texts);
 
-    // Skip chunks whose embedding failed (HuggingFace transient errors)
-    const vectors = chunks
-        .map((chunk, i) => {
-            const values = embeddings[i];
-            if (!values) return null;
-            return {
-                id: chunk.id,
-                values,
-                metadata: {
-                    text: chunk.text,
-                    fileName: chunk.fileName,
-                    fileType: chunk.fileType,
-                    userEmail: chunk.userEmail,
-                    conversationId: chunk.conversationId,
-                    chunkIndex: chunk.chunkIndex,
-                },
-            };
-        })
-        .filter((v): v is NonNullable<typeof v> => v !== null);
+    const rawMapped = chunks.map((chunk, i) => {
+        const values = embeddings[i];
+        if (values == null) return null;
+        return {
+            id: chunk.id,
+            values,
+            metadata: {
+                text: chunk.text,
+                fileName: chunk.fileName,
+                fileType: chunk.fileType,
+                userEmail: chunk.userEmail,
+                conversationId: chunk.conversationId,
+                chunkIndex: chunk.chunkIndex,
+            },
+        };
+    });
 
-    if (vectors.length === 0) return; // nothing to upsert
+    const vectors = rawMapped.filter((v): v is NonNullable<typeof v> => v != null);
 
-    // Pinecone recommends batches of 100
+    if (vectors.length === 0) {
+        throw new Error("No valid embeddings returned — all chunks failed to embed");
+    }
+
+    const sanitizedVectors = vectors.map((v) => ({
+        ...v,
+        values: Array.from(v.values) as number[],
+    }));
+
     const batchSize = 100;
-    for (let i = 0; i < vectors.length; i += batchSize) {
-        await index.upsert(vectors.slice(i, i + batchSize) as never);
+    for (let i = 0; i < sanitizedVectors.length; i += batchSize) {
+        await index.upsert({ records: sanitizedVectors.slice(i, i + batchSize) });
     }
 }
 
-
 export async function searchSimilarChunks(
     query: string,
-    userEmail: string,
     conversationId: string,
     topK = 6
 ): Promise<{ text: string; fileName: string; score: number }[]> {
@@ -85,13 +88,12 @@ export async function searchSimilarChunks(
         topK: fetchK,
         includeMetadata: true,
         filter: {
-            userEmail: { $eq: userEmail },
             conversationId: { $eq: conversationId },
         },
     });
 
     const candidates = (results.matches ?? [])
-        .filter((m) => m.score && m.score > 0.35)
+        .filter((m) => m.score && m.score > 0.1)
         .map((m) => ({
             text: m.metadata?.text as string,
             fileName: m.metadata?.fileName as string,
@@ -144,8 +146,8 @@ function mmrSelect<T extends { text: string; score: number }>(
                 selected.length === 0
                     ? 0
                     : Math.max(
-                          ...selected.map((s) => jaccardSim(remaining[i].text, s.text))
-                      );
+                        ...selected.map((s) => jaccardSim(remaining[i].text, s.text))
+                    );
 
             const mmrScore = lambda * relevance - (1 - lambda) * maxSim;
             if (mmrScore > bestScore) {
@@ -179,7 +181,6 @@ export async function deleteConversationChunks(
     const index = getIndex();
     await index.deleteMany({
         filter: {
-            userEmail: { $eq: userEmail },
             conversationId: { $eq: conversationId },
         },
     });
