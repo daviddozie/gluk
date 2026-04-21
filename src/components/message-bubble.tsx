@@ -27,8 +27,8 @@ function CopyButton({ text, isDark }: { text: string; isDark: boolean }) {
     <button
       onClick={handleCopy}
       className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs cursor-pointer transition-all ${isDark
-          ? "text-white/40 hover:text-white/80 hover:bg-white/8"
-          : "text-black/40 hover:text-black/80 hover:bg-black/6"
+        ? "text-white/40 hover:text-white/80 hover:bg-white/8"
+        : "text-black/40 hover:text-black/80 hover:bg-black/6"
         }`}
     >
       {copied ? (
@@ -54,13 +54,48 @@ function CopyButton({ text, isDark }: { text: string; isDark: boolean }) {
 function SpeakButton({ text, isDark }: { text: string; isDark: boolean }) {
   const [state, setState] = useState<"idle" | "loading" | "playing">("idle");
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const sourceRef = useRef<MediaSource | null>(null);
+  const sourceBufferRef = useRef<SourceBuffer | null>(null);
+  const chunkQueueRef = useRef<Uint8Array[]>([]);
+  const appendingRef = useRef(false);
+
+  const cleanup = () => {
+    if (sourceRef.current && sourceRef.current.readyState === "open") {
+      try { sourceRef.current.endOfStream(); } catch { }
+    }
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = "";
+      audioRef.current = null;
+    }
+    sourceRef.current = null;
+    sourceBufferRef.current = null;
+    chunkQueueRef.current = [];
+    appendingRef.current = false;
+  };
+
+  const handleStop = () => {
+    cleanup();
+    setState("idle");
+  };
+
+  const flushQueue = () => {
+    const sb = sourceBufferRef.current;
+    if (!sb || appendingRef.current || chunkQueueRef.current.length === 0) return;
+
+    const chunk = chunkQueueRef.current.shift()!;
+    appendingRef.current = true;
+    try {
+      sb.appendBuffer(chunk.buffer as ArrayBuffer);
+    } catch (e) {
+      console.error("appendBuffer error:", e);
+      appendingRef.current = false;
+    }
+  };
 
   const handleSpeak = async () => {
-    // If already playing, stop it
-    if (state === "playing") {
-      audioRef.current?.pause();
-      if (audioRef.current) audioRef.current.currentTime = 0;
-      setState("idle");
+    if (state === "playing" || state === "loading") {
+      handleStop();
       return;
     }
 
@@ -73,33 +108,105 @@ function SpeakButton({ text, isDark }: { text: string; isDark: boolean }) {
         body: JSON.stringify({ text }),
       });
 
-      if (!res.ok) throw new Error("TTS failed");
+      if (!res.ok || !res.body) throw new Error("TTS failed");
 
-      const { audioContent } = await res.json() as { audioContent: string };
+      const mediaSource = new MediaSource();
+      sourceRef.current = mediaSource;
 
-      // Decode base64 MP3 and play it
-      const binary = atob(audioContent);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      const blob = new Blob([bytes], { type: "audio/mp3" });
-      const url = URL.createObjectURL(blob);
-
+      const url = URL.createObjectURL(mediaSource);
       const audio = new Audio(url);
       audioRef.current = audio;
 
       audio.onended = () => {
-        setState("idle");
         URL.revokeObjectURL(url);
+        cleanup();
+        setState("idle");
       };
       audio.onerror = () => {
-        setState("idle");
         URL.revokeObjectURL(url);
+        cleanup();
+        setState("idle");
       };
 
-      await audio.play();
-      setState("playing");
+      mediaSource.addEventListener("sourceopen", async () => {
+        URL.revokeObjectURL(url);
+
+        const mimeType = "audio/mpeg";
+
+        if (!MediaSource.isTypeSupported(mimeType)) {
+          // Safari fallback — collect all chunks then play as blob
+          const reader = res.body!.getReader();
+          const chunks: BlobPart[] = [];
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) chunks.push(value);
+          }
+          const blob = new Blob(chunks, { type: "audio/mpeg" });
+          const blobUrl = URL.createObjectURL(blob);
+          audio.src = blobUrl;
+          audio.onended = () => {
+            URL.revokeObjectURL(blobUrl);
+            setState("idle");
+          };
+          await audio.play();
+          setState("playing");
+          return;
+        }
+
+        const sb = mediaSource.addSourceBuffer(mimeType);
+        sourceBufferRef.current = sb;
+
+        sb.addEventListener("updateend", () => {
+          appendingRef.current = false;
+          flushQueue();
+        });
+
+        const reader = res.body!.getReader();
+        let started = false;
+
+        const pump = async () => {
+          while (true) {
+            const { done, value } = await reader.read();
+
+            if (done) {
+              const drain = setInterval(() => {
+                if (chunkQueueRef.current.length === 0 && !appendingRef.current) {
+                  clearInterval(drain);
+                  if (mediaSource.readyState === "open") {
+                    try { mediaSource.endOfStream(); } catch { }
+                  }
+                }
+              }, 50);
+              break;
+            }
+
+            if (value) {
+              chunkQueueRef.current.push(new Uint8Array(value));
+              flushQueue();
+
+              if (!started) {
+                started = true;
+                try {
+                  await audio.play();
+                  setState("playing");
+                } catch (e) {
+                  console.error("play error:", e);
+                }
+              }
+            }
+          }
+        };
+
+        pump().catch((e) => {
+          console.error("stream pump error:", e);
+          setState("idle");
+        });
+      });
+
     } catch (err) {
       console.error("TTS error:", err);
+      cleanup();
       setState("idle");
     }
   };
@@ -107,25 +214,21 @@ function SpeakButton({ text, isDark }: { text: string; isDark: boolean }) {
   return (
     <button
       onClick={handleSpeak}
-      disabled={state === "loading"}
       title={state === "playing" ? "Stop" : "Read aloud"}
       className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs cursor-pointer transition-all ${isDark
-          ? "text-white/40 hover:text-white/80 hover:bg-white/8 disabled:opacity-30"
-          : "text-black/40 hover:text-black/80 hover:bg-black/6 disabled:opacity-30"
+        ? "text-white/40 hover:text-white/80 hover:bg-white/8 disabled:opacity-30"
+        : "text-black/40 hover:text-black/80 hover:bg-black/6 disabled:opacity-30"
         } ${state === "playing" ? (isDark ? "text-white/80" : "text-black/80") : ""}`}
     >
       {state === "loading" ? (
-        // Spinner
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin">
           <path d="M21 12a9 9 0 1 1-6.219-8.56" />
         </svg>
       ) : state === "playing" ? (
-        // Stop icon
         <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
           <rect x="4" y="4" width="16" height="16" rx="2" />
         </svg>
       ) : (
-        // Speaker icon
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
           <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
@@ -230,8 +333,8 @@ export default function MessageBubble({ message, theme }: MessageBubbleProps) {
                         return (
                           <code
                             className={`px-1.5 py-0.5 rounded text-[0.85em] font-mono border transition-colors duration-300 ${isDark
-                                ? "bg-white/8 text-white/90 border-white/8"
-                                : "bg-black/6 text-black/80 border-black/10"
+                              ? "bg-white/8 text-white/90 border-white/8"
+                              : "bg-black/6 text-black/80 border-black/10"
                               }`}
                             {...props}
                           >

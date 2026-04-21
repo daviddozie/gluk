@@ -43,7 +43,6 @@ export async function embedText(text: string, retries = 2): Promise<number[] | n
 }
 
 export async function embedBatch(texts: string[]): Promise<(number[] | null)[]> {
-    // Voyage supports batching natively — send all texts in one request
     try {
         const response = await withTimeout(
             fetch("https://api.voyageai.com/v1/embeddings", {
