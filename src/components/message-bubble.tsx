@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useSession } from "next-auth/react";
 import { Message } from "@/types/chat";
 import ReactMarkdown from "react-markdown";
@@ -26,11 +26,10 @@ function CopyButton({ text, isDark }: { text: string; isDark: boolean }) {
   return (
     <button
       onClick={handleCopy}
-      className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs cursor-pointer transition-all ${
-        isDark
+      className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs cursor-pointer transition-all ${isDark
           ? "text-white/40 hover:text-white/80 hover:bg-white/8"
           : "text-black/40 hover:text-black/80 hover:bg-black/6"
-      }`}
+        }`}
     >
       {copied ? (
         <>
@@ -48,6 +47,92 @@ function CopyButton({ text, isDark }: { text: string; isDark: boolean }) {
           Copy
         </>
       )}
+    </button>
+  );
+}
+
+function SpeakButton({ text, isDark }: { text: string; isDark: boolean }) {
+  const [state, setState] = useState<"idle" | "loading" | "playing">("idle");
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const handleSpeak = async () => {
+    // If already playing, stop it
+    if (state === "playing") {
+      audioRef.current?.pause();
+      if (audioRef.current) audioRef.current.currentTime = 0;
+      setState("idle");
+      return;
+    }
+
+    setState("loading");
+
+    try {
+      const res = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+
+      if (!res.ok) throw new Error("TTS failed");
+
+      const { audioContent } = await res.json() as { audioContent: string };
+
+      // Decode base64 MP3 and play it
+      const binary = atob(audioContent);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: "audio/mp3" });
+      const url = URL.createObjectURL(blob);
+
+      const audio = new Audio(url);
+      audioRef.current = audio;
+
+      audio.onended = () => {
+        setState("idle");
+        URL.revokeObjectURL(url);
+      };
+      audio.onerror = () => {
+        setState("idle");
+        URL.revokeObjectURL(url);
+      };
+
+      await audio.play();
+      setState("playing");
+    } catch (err) {
+      console.error("TTS error:", err);
+      setState("idle");
+    }
+  };
+
+  return (
+    <button
+      onClick={handleSpeak}
+      disabled={state === "loading"}
+      title={state === "playing" ? "Stop" : "Read aloud"}
+      className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs cursor-pointer transition-all ${isDark
+          ? "text-white/40 hover:text-white/80 hover:bg-white/8 disabled:opacity-30"
+          : "text-black/40 hover:text-black/80 hover:bg-black/6 disabled:opacity-30"
+        } ${state === "playing" ? (isDark ? "text-white/80" : "text-black/80") : ""}`}
+    >
+      {state === "loading" ? (
+        // Spinner
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin">
+          <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+        </svg>
+      ) : state === "playing" ? (
+        // Stop icon
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+          <rect x="4" y="4" width="16" height="16" rx="2" />
+        </svg>
+      ) : (
+        // Speaker icon
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+          <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+        </svg>
+      )}
+      {state === "loading" ? "Loading…" : state === "playing" ? "Stop" : "Speak"}
     </button>
   );
 }
@@ -99,9 +184,8 @@ export default function MessageBubble({ message, theme }: MessageBubbleProps) {
             {message.files && message.files.length > 0 && (
               <div className="flex flex-wrap gap-2 justify-end">
                 {message.files.map((f, i) => (
-                  <div key={i} className={`w-16 h-16 rounded-xl overflow-hidden border flex items-center justify-center shrink-0 transition-colors duration-300 ${
-                    isDark ? "border-white/10 bg-white/5" : "border-black/10 bg-black/5"
-                  }`}>
+                  <div key={i} className={`w-16 h-16 rounded-xl overflow-hidden border flex items-center justify-center shrink-0 transition-colors duration-300 ${isDark ? "border-white/10 bg-white/5" : "border-black/10 bg-black/5"
+                    }`}>
                     {f.type.startsWith("image/") ? (
                       <img src={f.url} alt={f.name} className="w-full h-full object-cover" />
                     ) : (
@@ -121,17 +205,15 @@ export default function MessageBubble({ message, theme }: MessageBubbleProps) {
             )}
             {/* Message text */}
             {message.content && (
-              <div className={`border rounded-2xl rounded-tr-sm px-4 py-3 text-sm leading-relaxed transition-colors duration-300 ${
-                isDark ? "bg-white/8 border-white/8 text-white/90" : "bg-black/6 border-black/8 text-black/85"
-              }`}>
+              <div className={`border rounded-2xl rounded-tr-sm px-4 py-3 text-sm leading-relaxed transition-colors duration-300 ${isDark ? "bg-white/8 border-white/8 text-white/90" : "bg-black/6 border-black/8 text-black/85"
+                }`}>
                 {message.content}
               </div>
             )}
           </div>
         ) : (
-          <div className={`text-sm leading-relaxed w-full transition-colors duration-300 ${
-            isDark ? "text-white/85" : "text-black/80"
-          }`}>
+          <div className={`text-sm leading-relaxed w-full transition-colors duration-300 ${isDark ? "text-white/85" : "text-black/80"
+            }`}>
             {message.isStreaming && !message.content ? (
               <TypingIndicator />
             ) : (
@@ -147,11 +229,10 @@ export default function MessageBubble({ message, theme }: MessageBubbleProps) {
                       if (isInline) {
                         return (
                           <code
-                            className={`px-1.5 py-0.5 rounded text-[0.85em] font-mono border transition-colors duration-300 ${
-                              isDark
+                            className={`px-1.5 py-0.5 rounded text-[0.85em] font-mono border transition-colors duration-300 ${isDark
                                 ? "bg-white/8 text-white/90 border-white/8"
                                 : "bg-black/6 text-black/80 border-black/10"
-                            }`}
+                              }`}
                             {...props}
                           >
                             {children}
@@ -160,12 +241,10 @@ export default function MessageBubble({ message, theme }: MessageBubbleProps) {
                       }
 
                       return (
-                        <div className={`my-3 rounded-xl overflow-hidden border transition-colors duration-300 ${
-                          isDark ? "border-white/8" : "border-black/10"
-                        }`}>
-                          <div className={`flex items-center justify-between px-4 py-2 border-b transition-colors duration-300 ${
-                            isDark ? "bg-white/4 border-white/6" : "bg-black/4 border-black/8"
+                        <div className={`my-3 rounded-xl overflow-hidden border transition-colors duration-300 ${isDark ? "border-white/8" : "border-black/10"
                           }`}>
+                          <div className={`flex items-center justify-between px-4 py-2 border-b transition-colors duration-300 ${isDark ? "bg-white/4 border-white/6" : "bg-black/4 border-black/8"
+                            }`}>
                             <span className={`text-xs font-mono ${isDark ? "text-white/40" : "text-black/50"}`}>
                               {match ? match[1] : "code"}
                             </span>
@@ -211,9 +290,8 @@ export default function MessageBubble({ message, theme }: MessageBubbleProps) {
                     },
                     blockquote({ children }) {
                       return (
-                        <blockquote className={`border-l-2 pl-4 italic my-3 transition-colors duration-300 ${
-                          isDark ? "border-white/20 text-white/60" : "border-black/20 text-black/60"
-                        }`}>
+                        <blockquote className={`border-l-2 pl-4 italic my-3 transition-colors duration-300 ${isDark ? "border-white/20 text-white/60" : "border-black/20 text-black/60"
+                          }`}>
                           {children}
                         </blockquote>
                       );
@@ -223,9 +301,8 @@ export default function MessageBubble({ message, theme }: MessageBubbleProps) {
                     },
                     a({ children, href }) {
                       return (
-                        <a href={href} target="_blank" rel="noopener noreferrer" className={`underline underline-offset-2 transition-colors ${
-                          isDark ? "text-white hover:text-white/70" : "text-blue-600 hover:text-blue-500"
-                        }`}>
+                        <a href={href} target="_blank" rel="noopener noreferrer" className={`underline underline-offset-2 transition-colors ${isDark ? "text-white hover:text-white/70" : "text-blue-600 hover:text-blue-500"
+                          }`}>
                           {children}
                         </a>
                       );
@@ -238,14 +315,12 @@ export default function MessageBubble({ message, theme }: MessageBubbleProps) {
                       );
                     },
                     th({ children }) {
-                      return <th className={`border px-3 py-2 text-left font-semibold transition-colors duration-300 ${
-                        isDark ? "border-white/10 bg-white/4" : "border-black/10 bg-black/4"
-                      }`}>{children}</th>;
+                      return <th className={`border px-3 py-2 text-left font-semibold transition-colors duration-300 ${isDark ? "border-white/10 bg-white/4" : "border-black/10 bg-black/4"
+                        }`}>{children}</th>;
                     },
                     td({ children }) {
-                      return <td className={`border px-3 py-2 transition-colors duration-300 ${
-                        isDark ? "border-white/10" : "border-black/10"
-                      }`}>{children}</td>;
+                      return <td className={`border px-3 py-2 transition-colors duration-300 ${isDark ? "border-white/10" : "border-black/10"
+                        }`}>{children}</td>;
                     },
                     hr() {
                       return <hr className={`my-4 transition-colors duration-300 ${isDark ? "border-white/10" : "border-black/10"}`} />;
@@ -260,10 +335,11 @@ export default function MessageBubble({ message, theme }: MessageBubbleProps) {
           </div>
         )}
 
-        {/* Copy full message button for assistant */}
+        {/* Copy + Speak buttons for assistant messages */}
         {!isUser && !message.isStreaming && message.content && (
           <div className="flex items-center gap-1 mt-1">
             <CopyButton text={message.content} isDark={isDark} />
+            <SpeakButton text={message.content} isDark={isDark} />
           </div>
         )}
       </div>
