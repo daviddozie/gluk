@@ -20,28 +20,23 @@ function stripMarkdown(text: string): string {
         .trim();
 }
 
-let cachedVoiceId: string | null = null;
+export interface WordTimestamp {
+    word: string;
+    start: number;
+    end: number;
+}
 
-async function getVoiceId(apiKey: string): Promise<string> {
-    if (cachedVoiceId) return cachedVoiceId;
-
-    try {
-        const res = await fetch("https://api.elevenlabs.io/v1/voices", {
-            headers: { "xi-api-key": apiKey },
-        });
-        if (res.ok) {
-            const data = await res.json() as { voices: { voice_id: string; name: string }[] };
-            if (data.voices?.length > 0) {
-                cachedVoiceId = data.voices[0].voice_id;
-                console.log("[tts] using voice:", data.voices[0].name, cachedVoiceId);
-                return cachedVoiceId;
-            }
-        }
-    } catch {
-        console.warn("[tts] could not fetch voices, using fallback");
-    }
-
-    return "JBFqnCBsd6RMkjVDRTpX";
+function buildWordTimestamps(text: string): WordTimestamp[] {
+    const rawWords = text.split(/\s+/).filter(Boolean);
+    const AVG_CHARS_PER_SEC = 14;
+    let cursor = 0;
+    return rawWords.map((word) => {
+        const duration = Math.max(0.15, word.replace(/[^a-zA-Z]/g, "").length / AVG_CHARS_PER_SEC);
+        const start = cursor;
+        const end = cursor + duration;
+        cursor = end + 0.05;
+        return { word, start, end };
+    });
 }
 
 export async function POST(req: NextRequest) {
@@ -55,47 +50,47 @@ export async function POST(req: NextRequest) {
         return Response.json({ error: "text is required" }, { status: 400 });
     }
 
-    const apiKey = process.env.ELEVENLABS_API_KEY;
+    const apiKey = process.env.DEEPGRAM_API_KEY;
     if (!apiKey) {
-        return Response.json({ error: "ELEVENLABS_API_KEY not configured" }, { status: 500 });
+        return Response.json({ error: "DEEPGRAM_API_KEY not configured" }, { status: 500 });
     }
 
-    const cleanText = stripMarkdown(text).slice(0, 2500);
-    const VOICE_ID = await getVoiceId(apiKey);
+    const cleanText = stripMarkdown(text).slice(0, 3000);
+    const voice = "aura-2-odysseus-en";
 
-    const elevenRes = await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream`,
+    const deepgramRes = await fetch(
+        `https://api.deepgram.com/v1/speak?model=${voice}&encoding=mp3`,
         {
             method: "POST",
             headers: {
-                "xi-api-key": apiKey,
+                "Authorization": `Token ${apiKey}`,
                 "Content-Type": "application/json",
-                Accept: "audio/mpeg",
+                "Accept": "audio/mpeg",
             },
-            body: JSON.stringify({
-                text: cleanText,
-                model_id: "eleven_flash_v2_5",
-                voice_settings: {
-                    stability: 0.5,
-                    similarity_boost: 0.75,
-                },
-            }),
+            body: JSON.stringify({ text: cleanText }),
         }
     );
 
-    if (!elevenRes.ok) {
-        const err = await elevenRes.text();
-        console.error("ElevenLabs TTS error:", elevenRes.status, err);
+    if (!deepgramRes.ok) {
+        const err = await deepgramRes.text();
+        console.error("Deepgram TTS error:", deepgramRes.status, err);
         return Response.json({ error: "TTS request failed" }, { status: 500 });
     }
 
-    return new Response(elevenRes.body, {
+    // Build word timestamps and send as header before streaming audio
+    const words = buildWordTimestamps(cleanText);
+    const wordsHeader = Buffer.from(JSON.stringify(words)).toString("base64");
+
+    // Pipe Deepgram audio stream directly to client — no buffering
+    return new Response(deepgramRes.body, {
         status: 200,
         headers: {
             "Content-Type": "audio/mpeg",
             "Transfer-Encoding": "chunked",
             "Cache-Control": "no-cache",
             "X-Content-Type-Options": "nosniff",
+            "X-Word-Timestamps": wordsHeader,
+            "Access-Control-Expose-Headers": "X-Word-Timestamps",
         },
     });
 }

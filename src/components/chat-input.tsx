@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { Paperclip, X, FileText, Sheet, File } from "lucide-react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { Paperclip, X, FileText, Sheet, File, Mic, MicOff } from "lucide-react";
 
 export interface AttachedFile {
     id: string;
@@ -110,9 +110,23 @@ function FilePreviewChip({ file, onRemove }: { file: AttachedFile; onRemove: () 
 export default function ChatInput({ onSend, onAbort, isStreaming, theme }: ChatInputProps) {
     const [input, setInput] = useState("");
     const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+    const [isRecording, setIsRecording] = useState(false);
+    const [isTranscribing, setIsTranscribing] = useState(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    const audioChunksRef = useRef<Blob[]>([]);
+    const audioContextRef = useRef<AudioContext | null>(null);
+    const analyserRef = useRef<AnalyserNode | null>(null);
+    const canvasRef = useRef<HTMLCanvasElement | null>(null);
+    const animFrameRef = useRef<number>(0);
+    const waveHistoryRef = useRef<number[]>([]);
+    const isDarkRef = useRef(theme === "dark");
     const isDark = theme === "dark";
+
+    useEffect(() => {
+        isDarkRef.current = theme === "dark";
+    }, [theme]);
 
     useEffect(() => {
         if (textareaRef.current) {
@@ -185,6 +199,128 @@ export default function ChatInput({ onSend, onAbort, isStreaming, theme }: ChatI
         if (textareaRef.current) textareaRef.current.style.height = "auto";
     };
 
+    const drawWaveform = useCallback(() => {
+        const canvas = canvasRef.current;
+        const analyser = analyserRef.current;
+        if (!canvas || !analyser) return;
+
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+        analyser.getByteFrequencyData(dataArray);
+
+        let sum = 0;
+        for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
+        const avg = sum / bufferLength / 255;
+
+        waveHistoryRef.current.push(avg);
+        const maxBars = Math.floor(canvas.width / 3);
+        if (waveHistoryRef.current.length > maxBars) {
+            waveHistoryRef.current.shift();
+        }
+
+        // Draw
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const barW = 2;
+        const gap = 3;
+        const midY = canvas.height / 2;
+        const history = waveHistoryRef.current;
+
+        for (let i = 0; i < history.length; i++) {
+            const amp = history[i];
+            const minH = 3;
+            const barH = Math.max(minH, amp * canvas.height * 0.92);
+            const x = i * (barW + gap);
+            const alpha = 0.35 + amp * 0.65;
+            ctx.fillStyle = isDarkRef.current
+                ? `rgba(255,255,255,${alpha})`
+                : `rgba(0,0,0,${alpha})`;
+            ctx.beginPath();
+            ctx.roundRect(x, midY - barH / 2, barW, barH, 1.5);
+            ctx.fill();
+        }
+
+        animFrameRef.current = requestAnimationFrame(drawWaveform);
+    }, []);
+
+    const startRecording = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const audioCtx = new AudioContext();
+            const source = audioCtx.createMediaStreamSource(stream);
+            const analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 128;
+            analyser.smoothingTimeConstant = 0.75;
+            source.connect(analyser);
+            audioContextRef.current = audioCtx;
+            analyserRef.current = analyser;
+            waveHistoryRef.current = [];
+
+            // MediaRecorder
+            const recorder = new MediaRecorder(stream);
+            audioChunksRef.current = [];
+            recorder.ondataavailable = (e) => {
+                if (e.data.size > 0) audioChunksRef.current.push(e.data);
+            };
+            recorder.onstop = async () => {
+                stream.getTracks().forEach((t) => t.stop());
+                audioContextRef.current?.close();
+                audioContextRef.current = null;
+                analyserRef.current = null;
+                cancelAnimationFrame(animFrameRef.current);
+
+                const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+                setIsTranscribing(true);
+                try {
+                    const fd = new FormData();
+                    fd.append("audio", blob, "recording.webm");
+                    const res = await fetch("/api/stt", { method: "POST", body: fd });
+                    const { transcript } = await res.json();
+                    if (transcript) {
+                        setInput((prev) => prev ? prev + " " + transcript : transcript);
+                    }
+                } catch (err) {
+                    console.error("STT error:", err);
+                } finally {
+                    setIsTranscribing(false);
+                }
+            };
+            recorder.start();
+            mediaRecorderRef.current = recorder;
+            setIsRecording(true);
+
+            // Start animation after state update
+            setTimeout(() => { animFrameRef.current = requestAnimationFrame(drawWaveform); }, 50);
+        } catch (err) {
+            console.error("Microphone access error:", err);
+        }
+    };
+
+    const stopRecording = () => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+            mediaRecorderRef.current.stop();
+        }
+        setIsRecording(false);
+    };
+
+    const cancelRecording = () => {
+        cancelAnimationFrame(animFrameRef.current);
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+            // Prevent onstop from transcribing by clearing chunks
+            audioChunksRef.current = [];
+            mediaRecorderRef.current.onstop = () => {
+                mediaRecorderRef.current?.stream?.getTracks().forEach((t) => t.stop());
+                audioContextRef.current?.close();
+                audioContextRef.current = null;
+                analyserRef.current = null;
+            };
+            mediaRecorderRef.current.stop();
+        }
+        setIsRecording(false);
+    };
+
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
@@ -213,62 +349,122 @@ export default function ChatInput({ onSend, onAbort, isStreaming, theme }: ChatI
                     )}
 
                     <div className={`flex items-end gap-2 px-3 sm:px-4 py-3 ${attachedFiles.length > 0 ? "pt-6" : ""}`}>
-                        <button
-                            onClick={() => fileInputRef.current?.click()}
-                            disabled={isStreaming}
-                            className={`flex-shrink-0 p-1.5 rounded-lg cursor-pointer transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
-                                isDark
-                                    ? "text-white/40 hover:text-white/80 hover:bg-white/8"
-                                    : "text-black/40 hover:text-black/80 hover:bg-black/8"
-                            }`}
-                            title="Attach file"
-                        >
-                            <Paperclip className="w-4 h-4" />
-                        </button>
 
-                        <textarea
-                            ref={textareaRef}
-                            value={input}
-                            onChange={(e) => setInput(e.target.value)}
-                            onKeyDown={handleKeyDown}
-                            placeholder="Message Gluk..."
-                            rows={1}
-                            className={`flex-1 bg-transparent text-sm resize-none outline-none leading-6 max-h-[160px] overflow-y-auto transition-colors duration-300 ${
-                                isDark ? "text-white placeholder-white/30" : "text-black placeholder-black/30"
-                            }`}
-                            disabled={isStreaming}
-                        />
+                        {isRecording ? (
+                            /* ── Waveform recording UI ── */
+                            <>
+                                <div className="flex-1 flex items-center h-10 overflow-hidden">
+                                    <canvas
+                                        ref={(el) => {
+                                            canvasRef.current = el;
+                                            if (el) el.width = el.offsetWidth;
+                                        }}
+                                        height={40}
+                                        className="w-full h-full"
+                                        style={{ display: "block" }}
+                                    />
+                                </div>
 
-                        <div className="flex items-center flex-shrink-0">
-                            {isStreaming ? (
+                                {/* Cancel */}
                                 <button
-                                    onClick={onAbort}
-                                    className={`flex items-center justify-center w-8 h-8 rounded-lg border cursor-pointer transition-all ${
+                                    onClick={cancelRecording}
+                                    className={`flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full transition-all cursor-pointer ${
                                         isDark
-                                            ? "bg-white/10 hover:bg-white/20 border-white/20 text-white"
-                                            : "bg-black/8 hover:bg-black/15 border-black/20 text-black"
+                                            ? "text-white/50 hover:text-white hover:bg-white/10"
+                                            : "text-black/40 hover:text-black hover:bg-black/8"
                                     }`}
+                                    title="Cancel"
                                 >
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                                        <rect x="6" y="6" width="12" height="12" rx="2" />
-                                    </svg>
+                                    <X className="w-4 h-4" />
                                 </button>
-                            ) : (
+
+                                {/* Confirm / send */}
                                 <button
-                                    onClick={handleSend}
-                                    disabled={!canSend}
-                                    className={`flex items-center justify-center w-8 h-8 rounded-lg transition-all ${
-                                        canSend
-                                            ? (isDark ? "bg-white text-black hover:bg-white/90" : "bg-black text-white hover:bg-black/85")
-                                            : (isDark ? "bg-white/10 text-white/30 cursor-not-allowed" : "bg-black/8 text-black/30 cursor-not-allowed")
-                                    }`}
+                                    onClick={stopRecording}
+                                    className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full border-2 border-blue-400 text-blue-400 hover:bg-blue-400/10 transition-all cursor-pointer"
+                                    title="Done"
                                 >
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                        <path d="M12 19V5M5 12l7-7 7 7" />
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                        <path d="M20 6L9 17l-5-5" />
                                     </svg>
                                 </button>
-                            )}
-                        </div>
+                            </>
+                        ) : (
+                            /* ── Normal input UI ── */
+                            <>
+                                <button
+                                    onClick={() => fileInputRef.current?.click()}
+                                    disabled={isStreaming || isTranscribing}
+                                    className={`flex-shrink-0 p-1.5 rounded-lg cursor-pointer transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
+                                        isDark
+                                            ? "text-white/40 hover:text-white/80 hover:bg-white/8"
+                                            : "text-black/40 hover:text-black/80 hover:bg-black/8"
+                                    }`}
+                                    title="Attach file"
+                                >
+                                    <Paperclip className="w-4 h-4" />
+                                </button>
+
+                                <button
+                                    onClick={startRecording}
+                                    disabled={isStreaming || isTranscribing}
+                                    className={`flex-shrink-0 p-1.5 rounded-lg cursor-pointer transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
+                                        isTranscribing
+                                            ? isDark ? "text-white/30 animate-pulse" : "text-black/30 animate-pulse"
+                                            : isDark
+                                            ? "text-white/40 hover:text-white/80 hover:bg-white/8"
+                                            : "text-black/40 hover:text-black/80 hover:bg-black/8"
+                                    }`}
+                                    title={isTranscribing ? "Transcribing…" : "Voice input"}
+                                >
+                                    <Mic className="w-4 h-4" />
+                                </button>
+
+                                <textarea
+                                    ref={textareaRef}
+                                    value={input}
+                                    onChange={(e) => setInput(e.target.value)}
+                                    onKeyDown={handleKeyDown}
+                                    placeholder="Message Gluk..."
+                                    rows={1}
+                                    className={`flex-1 bg-transparent text-sm resize-none outline-none leading-6 max-h-[160px] overflow-y-auto transition-colors duration-300 ${
+                                        isDark ? "text-white placeholder-white/30" : "text-black placeholder-black/30"
+                                    }`}
+                                    disabled={isStreaming}
+                                />
+
+                                <div className="flex items-center flex-shrink-0">
+                                    {isStreaming ? (
+                                        <button
+                                            onClick={onAbort}
+                                            className={`flex items-center justify-center w-8 h-8 rounded-lg border cursor-pointer transition-all ${
+                                                isDark
+                                                    ? "bg-white/10 hover:bg-white/20 border-white/20 text-white"
+                                                    : "bg-black/8 hover:bg-black/15 border-black/20 text-black"
+                                            }`}
+                                        >
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                                <rect x="6" y="6" width="12" height="12" rx="2" />
+                                            </svg>
+                                        </button>
+                                    ) : (
+                                        <button
+                                            onClick={handleSend}
+                                            disabled={!canSend}
+                                            className={`flex items-center justify-center w-8 h-8 rounded-lg transition-all ${
+                                                canSend
+                                                    ? (isDark ? "bg-white text-black hover:bg-white/90" : "bg-black text-white hover:bg-black/85")
+                                                    : (isDark ? "bg-white/10 text-white/30 cursor-not-allowed" : "bg-black/8 text-black/30 cursor-not-allowed")
+                                            }`}
+                                        >
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                                <path d="M12 19V5M5 12l7-7 7 7" />
+                                            </svg>
+                                        </button>
+                                    )}
+                                </div>
+                            </>
+                        )}
                     </div>
                 </div>
 
