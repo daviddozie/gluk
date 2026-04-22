@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
         return Response.json({ error: "DEEPGRAM_API_KEY not configured" }, { status: 500 });
     }
 
-    const cleanText = stripMarkdown(text).slice(0, 3000);
+    const cleanText = stripMarkdown(text).slice(0, 2000);
     const voice = "aura-2-odysseus-en";
 
     const deepgramRes = await fetch(
