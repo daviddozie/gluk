@@ -1,68 +1,45 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# Dependencies
+node_modules/
 
-# dependencies
-/node_modules
-/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
+# Next.js / Build Output
+.next/
+out/
+build/
 
-# testing
-/coverage
 
-# next.js
-/.next/
-/out/
+# Environment Variables
+.env
+.env.local
+.env.*.local
 
-# production
-/build
+# Mastra (local runtime state)
+.mastra/
 
-# misc
-.DS_Store
-*.pem
+# Database Files (SQLite)
+*.db
+*.db-shm
+*.db-wal
 
-# debug
+# Logs
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# vercel
-.vercel
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts
-
-# dependencies
-node_modules/
-
-# next.js
-.next/
-out/
-
-# environment
-.env
-.env.local
-.env.*.local
-
-# mastra
-.mastra/
-
-# database
-*.db
-*.db-shm
-*.db-wal
-
-# logs
-*.log
-
-# system files
+# System Files
 .DS_Store
 Thumbs.db
 
-# typescript
+# TypeScript
 *.tsbuildinfo
+next-env.d.ts
+
+# Vercel
+.vercel
+
+# Coverage / Testing
+coverage/
+
+# Misc
+*.pem

@@ -36,7 +36,7 @@ export const webFetchTool = createTool({
                 signal: controller.signal,
                 headers: {
                     "User-Agent":
-                        "Mozilla/5.0 (compatible; GlukResearch/1.0; +https://gluk.app)",
+                        "Mozilla/5.0 (compatible; GlukResearch/1.0; +https://gluk.vercel.app)",
                     Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 },
             });
