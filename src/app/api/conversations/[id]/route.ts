@@ -1,6 +1,7 @@
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { deleteConversation, pinConversation } from "@/lib/db";
+import { deleteConversationChunks } from "@/lib/vector-store";
 import { NextRequest } from "next/server";
 
 export async function DELETE(
@@ -15,6 +16,7 @@ export async function DELETE(
     try {
         const { id } = await params;
         await deleteConversation(session.user.email, id);
+        await deleteConversationChunks(session.user.email, id);
         return Response.json({ success: true });
     } catch (err) {
         console.error("Failed to delete conversation:", err);

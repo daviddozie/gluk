@@ -1,9 +1,9 @@
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { processDocument } from "@/lib/document-processor";
-import { storeDocumentChunks } from "@/lib/vector-store";
+import { storeDocumentChunks, deleteFileChunks } from "@/lib/vector-store";
 import { NextRequest } from "next/server";
-import { nanoid } from "nanoid";
+import crypto from "crypto";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -36,9 +36,15 @@ export async function POST(req: NextRequest) {
                 const buffer = Buffer.from(await file.arrayBuffer());
                 const processed = await processDocument(buffer, file.name, file.type);
 
-                // Build chunk objects for Pinecone
+                // Clean up previous vector chunks for this file in this conversation first to prevent duplicates/orphans
+                await deleteFileChunks(conversationId, file.name);
+
+                // Generate a deterministic file hash from name for Pinecone ID ASCII safety
+                const fileHash = crypto.createHash("md5").update(file.name).digest("hex");
+
+                // Build chunk objects for Pinecone with deterministic IDs
                 const chunks = processed.chunks.map((text, i) => ({
-                    id: `${nanoid()}-${i}`,
+                    id: `${conversationId}-${fileHash}-${i}`,
                     text,
                     fileName: file.name,
                     fileType: file.type,

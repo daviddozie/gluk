@@ -12,6 +12,14 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
 import { Settings, HelpCircle, LogOut, ChevronUp, Pin, PinOff, Trash2, MoreHorizontal, Search, X } from "lucide-react";
 
 interface SidebarProps {
@@ -39,6 +47,7 @@ export default function Sidebar({
 }: SidebarProps) {
     const { data: session } = useSession();
     const [search, setSearch] = useState("");
+    const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
 
     if (!isOpen) return null;
 
@@ -137,7 +146,7 @@ export default function Sidebar({
                                         isActive={conv.id === activeConversationId}
                                         isDark={isDark}
                                         onSelect={onSelect}
-                                        onDelete={onDelete}
+                                        onDelete={(id) => setDeleteTarget({ id, title: conv.title })}
                                         onPin={onPin}
                                     />
                                 ))}
@@ -157,7 +166,7 @@ export default function Sidebar({
                                 isActive={conv.id === activeConversationId}
                                 isDark={isDark}
                                 onSelect={onSelect}
-                                onDelete={onDelete}
+                                onDelete={(id) => setDeleteTarget({ id, title: conv.title })}
                                 onPin={onPin}
                             />
                         ))}
@@ -245,6 +254,37 @@ export default function Sidebar({
                     </DropdownMenuContent>
                 </DropdownMenu>
             </div>
+            <Dialog open={deleteTarget !== null} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+                <DialogContent className="sm:max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle className="mb-4">Delete chat?</DialogTitle>
+                        <DialogDescription>
+                            Are you sure you want to delete <strong className={isDark ? "text-white/80" : "text-black/80"}>"{deleteTarget?.title}"</strong>?<br/><br/> This will permanently erase this chat.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter className="flex gap-2 justify-end sm:justify-end">
+                        <button
+                            onClick={() => setDeleteTarget(null)}
+                            className={`px-10 py-2 rounded-sm text-xs font-medium cursor-pointer transition-colors ${
+                                isDark ? "hover:bg-white/6 text-white/60 hover:text-white" : "hover:bg-black/6 text-black/60 hover:text-black"
+                            }`}
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            onClick={() => {
+                                if (deleteTarget) {
+                                    onDelete(deleteTarget.id);
+                                    setDeleteTarget(null);
+                                }
+                            }}
+                            className="px-10 py-2 rounded-sm text-xs font-semibold bg-red-500 hover:bg-red-600 text-white cursor-pointer transition-colors shadow-sm shadow-red-500/20"
+                        >
+                            Yes
+                        </button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }
@@ -303,7 +343,8 @@ function ConvRow({ conv, isActive, isDark, onSelect, onDelete, onPin }: ConvRowP
                     className={`w-44 ${isDark ? "bg-[#1a1a1a] border-white/8 text-white" : "bg-white border-black/10 text-black"}`}
                 >
                     <DropdownMenuItem
-                        onClick={(e) => { e.stopPropagation(); onPin(conv.id, !conv.pinned); }}
+                        onSelect={() => onPin(conv.id, !conv.pinned)}
+                        onClick={(e) => e.stopPropagation()}
                         className={`gap-2 cursor-pointer text-xs ${
                             isDark ? "text-white/70 hover:text-white focus:text-white focus:bg-white/6" : "text-black/70 hover:text-black focus:text-black focus:bg-black/6"
                         }`}
@@ -315,7 +356,8 @@ function ConvRow({ conv, isActive, isDark, onSelect, onDelete, onPin }: ConvRowP
                     <DropdownMenuSeparator className={isDark ? "bg-white/6" : "bg-black/10"} />
 
                     <DropdownMenuItem
-                        onClick={(e) => { e.stopPropagation(); onDelete(conv.id); }}
+                        onSelect={() => onDelete(conv.id)}
+                        onClick={(e) => e.stopPropagation()}
                         className="gap-2 cursor-pointer text-xs text-red-400 hover:text-red-300 focus:text-red-300 focus:bg-red-500/10"
                     >
                         <Trash2 className="w-3.5 h-3.5" />

@@ -1,6 +1,7 @@
 import { createWorkflow, createStep } from "@mastra/core/workflows";
 import { z } from "zod";
 import { nanoid } from "nanoid";
+import { glukAgent } from "../agents/gluk-agent";
 import {
     saveResearchSession,
     saveResearchSources,
@@ -9,13 +10,38 @@ import {
 
 // ─── Shared helpers (inlined to avoid tool-execute API quirks) ───────────────
 
+function extractDateConstraint(query: string): { hasRecent: boolean; hasYear: number | null; boostRecent: boolean } {
+    const lower = query.toLowerCase();
+    const recentKeywords = ["latest", "recent", "new", "current", "today", "now", "2025", "2024"];
+    const hasRecent = recentKeywords.some((kw) => lower.includes(kw));
+    const yearMatch = query.match(/\b(20[2-9][0-9])\b/);
+    const hasYear = yearMatch ? parseInt(yearMatch[0]) : null;
+    const techNewsTopics = ["ai", "model", "gpt", "llm", "breakthrough", "discovery", "release", "announcement"];
+    const isRecentTopic = techNewsTopics.some((topic) => lower.includes(topic));
+    return {
+        hasRecent: hasRecent || isRecentTopic,
+        hasYear,
+        boostRecent: hasRecent || isRecentTopic,
+    };
+}
+
 async function runWebSearch(query: string, sessionId: string) {
+    const dateConstraint = extractDateConstraint(query);
+
+    let enhancedQuery = query;
+    if (dateConstraint.hasYear) {
+        enhancedQuery = `${query} after:${dateConstraint.hasYear}-01-01`;
+    } else if (dateConstraint.boostRecent) {
+        const currentYear = new Date().getFullYear();
+        enhancedQuery = `${query} after:${currentYear - 1}-01-01`;
+    }
+
     const response = await fetch("https://api.tavily.com/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
             api_key: process.env.TAVILY_API_KEY,
-            query,
+            query: enhancedQuery,
             search_depth: "advanced",
             include_answer: true,
             max_results: 6,
@@ -34,20 +60,24 @@ async function runWebSearch(query: string, sessionId: string) {
     };
 }
 
-async function runWebFetch(url: string): Promise<{ title: string; text: string; success: boolean }> {
+async function runWebFetch(url: string, attempt = 0): Promise<{ title: string; text: string; success: boolean }> {
     try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 15000);
+        const timeout = setTimeout(() => controller.abort(), 8000);
         const response = await fetch(url, {
             signal: controller.signal,
             headers: { "User-Agent": "Mozilla/5.0 (compatible; GlukResearch/1.0)" },
         });
         clearTimeout(timeout);
-        if (!response.ok) return { title: "", text: "", success: false };
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const html = await response.text();
         const { title, text } = extractText(html);
         return { title, text: text.slice(0, 6000), success: true };
-    } catch {
+    } catch (err) {
+        if (attempt < 1) {
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            return runWebFetch(url, attempt + 1);
+        }
         return { title: "", text: "", success: false };
     }
 }
@@ -113,21 +143,69 @@ function rerankSources(
     return deduped.slice(0, topK);
 }
 
-function deriveSubQueries(query: string): string[] {
-    const base = query.trim();
-    const queries = [base];
-    if (!/\b(202[0-9]|latest|recent|current|today|now)\b/i.test(base)) {
-        queries.push(`${base} latest 2025`);
+async function llmPlan(query: string): Promise<string[]> {
+    const prompt = `You are a research planner. Break this user query into 3-5 specific, searchable sub-queries that cover different angles or aspects.
+
+Rules:
+- Each sub-query should be a complete, standalone search phrase
+- Cover complementary angles (e.g., definitions, recent developments, technical details, comparisons)
+- Do NOT include the year unless the query is specifically about recent events
+- Return ONLY a JSON array of strings, no other text
+
+Query: "${query}"
+
+Example output: ["quantum computing basics", "quantum computing 2025 breakthroughs", "quantum computing vs classical computing comparison"]
+
+Now generate for the query above.`;
+
+    try {
+        const response = await glukAgent.generate(prompt, {
+            modelSettings: {
+                maxOutputTokens: 500,
+            },
+        });
+        const jsonMatch = response.text.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                return parsed.slice(0, 5);
+            }
+        }
+        return [query];
+    } catch (error) {
+        console.error("LLM planning failed, falling back to heuristic:", error);
+        return [query, `${query} explained`, `${query} latest`];
     }
-    if (/^what\b/i.test(base)) {
-        queries.push(base.replace(/^what\b/i, "how"));
-    } else {
-        queries.push(`${base} explained`);
-    }
-    return queries.slice(0, 3);
 }
 
 function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
+
+function calculateConfidence(
+    rankedSources: Array<{ finalScore: number; credibilityScore: number }>,
+    tavilyAnswer: string
+): { level: "high" | "medium" | "low"; note: string } {
+    const bestFinalScore = rankedSources.length > 0 ? rankedSources[0].finalScore : 0;
+    const hasHighCredibility = rankedSources.some((s) => s.credibilityScore > 0.7);
+    const sourceCount = rankedSources.length;
+    const hasTavilyAnswer = tavilyAnswer.trim().length > 0;
+
+    if (bestFinalScore > 0.7 && hasHighCredibility && sourceCount >= 2) {
+        return {
+            level: "high",
+            note: `Strong relevance (${(bestFinalScore * 100).toFixed(0)}%) with ${sourceCount} credible sources${hasTavilyAnswer ? " and a direct answer" : ""}.`,
+        };
+    }
+    if (bestFinalScore > 0.5 || hasHighCredibility) {
+        return {
+            level: "medium",
+            note: `Moderate relevance (${(bestFinalScore * 100).toFixed(0)}%) — ${hasHighCredibility ? "at least one highly credible source found" : "credibility of sources is mixed"}.`,
+        };
+    }
+    return {
+        level: "low",
+        note: `Limited relevance (${(bestFinalScore * 100).toFixed(0)}%) — results may not fully address the query. Consider refining your search.`,
+    };
+}
 
 // ─── Input / Output Schemas ──────────────────────────────────────────────────
 
@@ -143,6 +221,10 @@ const ResearchOutput = z.object({
     sources: z.array(z.object({ title: z.string(), url: z.string(), finalScore: z.number() })),
     sessionId: z.string(),
     subQueriesUsed: z.array(z.string()),
+    confidence: z.object({
+        level: z.enum(["high", "medium", "low"]),
+        note: z.string(),
+    }),
 });
 
 // ─── Step 1: Plan ───────────────────────────────────────────────────────────
@@ -157,16 +239,17 @@ const planStep = createStep({
         userEmail: z.string(),
         ragContext: z.string(),
         subQueries: z.array(z.string()),
+        progress: z.string().optional(),
     }),
     execute: async ({ inputData }) => {
         const { query, conversationId, userEmail, ragContext } = inputData;
         const sessionId = nanoid();
-        const subQueries = deriveSubQueries(query);
+        const subQueries = await llmPlan(query);
         await saveResearchSession({
             id: sessionId, conversationId, userEmail,
             originalQuery: query, subQueries, status: "running",
         });
-        return { sessionId, originalQuery: query, conversationId, userEmail, ragContext: ragContext ?? "", subQueries };
+        return { sessionId, originalQuery: query, conversationId, userEmail, ragContext: ragContext ?? "", subQueries, progress: `📋 Planning research strategy for "${query.slice(0, 50)}${query.length > 50 ? "..." : ""}" — ${subQueries.length} angles identified` };
     },
 });
 
@@ -183,6 +266,7 @@ const gatherStep = createStep({
         subQueries: z.array(z.string()),
         rawSources: z.array(z.object({ title: z.string(), url: z.string(), content: z.string(), score: z.number() })),
         tavilyAnswer: z.string(),
+        progress: z.string().optional(),
     }),
     execute: async ({ inputData }) => {
         const { sessionId, subQueries, originalQuery, ragContext } = inputData;
@@ -207,7 +291,7 @@ const gatherStep = createStep({
             return true;
         });
 
-        return { sessionId, originalQuery, ragContext, subQueries: inputData.subQueries, rawSources, tavilyAnswer };
+        return { sessionId, originalQuery, ragContext, subQueries: inputData.subQueries, rawSources, tavilyAnswer, progress: `🔎 Searched ${subQueries.length} angles: ${subQueries.join(", ")}` };
     },
 });
 
@@ -226,6 +310,7 @@ const deepFetchStep = createStep({
         subQueries: z.array(z.string()),
         enrichedSources: z.array(z.object({ title: z.string(), url: z.string(), content: z.string(), score: z.number() })),
         tavilyAnswer: z.string(),
+        progress: z.string().optional(),
     }),
     execute: async ({ inputData }) => {
         const { rawSources, sessionId, originalQuery, ragContext, subQueries, tavilyAnswer } = inputData;
@@ -233,7 +318,7 @@ const deepFetchStep = createStep({
         const toFetch = sorted.slice(0, 4);
         const rest = sorted.slice(4);
 
-        const enriched = await Promise.all(
+        const results = await Promise.allSettled(
             toFetch.map(async (src) => {
                 const fetched = await runWebFetch(src.url);
                 if (fetched.success && fetched.text.length > 200) {
@@ -243,7 +328,16 @@ const deepFetchStep = createStep({
             })
         );
 
-        return { sessionId, originalQuery, ragContext, subQueries, tavilyAnswer, enrichedSources: [...enriched, ...rest] };
+        const enriched = results
+            .filter((result): result is PromiseFulfilledResult<typeof toFetch[number]> => result.status === "fulfilled")
+            .map((result) => result.value);
+
+        const failedCount = results.filter((r) => r.status === "rejected").length;
+        if (failedCount > 0) {
+            console.warn(`Deep fetch: ${failedCount}/${toFetch.length} URLs failed, continuing with ${enriched.length} sources`);
+        }
+
+        return { sessionId, originalQuery, ragContext, subQueries, tavilyAnswer, enrichedSources: [...enriched, ...rest], progress: ` Deep-read ${enriched.length} sources for full content` };
     },
 });
 
@@ -265,6 +359,7 @@ const rerankStep = createStep({
             finalScore: z.number(), credibilityScore: z.number(), relevanceScore: z.number(),
         })),
         tavilyAnswer: z.string(),
+        progress: z.string().optional(),
     }),
     execute: async ({ inputData }) => {
         const { enrichedSources, originalQuery, sessionId, ragContext, subQueries, tavilyAnswer } = inputData;
@@ -278,7 +373,7 @@ const rerankStep = createStep({
             }))
         );
 
-        return { sessionId, originalQuery, ragContext, subQueries, tavilyAnswer, rankedSources };
+        return { sessionId, originalQuery, ragContext, subQueries, tavilyAnswer, rankedSources, progress: `📊 Reranked ${rankedSources.length} sources by credibility and relevance` };
     },
 });
 
@@ -299,6 +394,8 @@ const synthesiseStep = createStep({
     execute: async ({ inputData }) => {
         const { sessionId, originalQuery, rankedSources, ragContext, subQueries, tavilyAnswer } = inputData;
 
+        const confidence = calculateConfidence(rankedSources, tavilyAnswer);
+
         const evidenceBlock = rankedSources.slice(0, 6).map((s, i) =>
             `[Source ${i + 1}] ${s.title}\nURL: ${s.url}\nRelevance: ${(s.relevanceScore * 100).toFixed(0)}% | Credibility: ${(s.credibilityScore * 100).toFixed(0)}%\n${s.content.slice(0, 1200)}`
         ).join("\n\n---\n\n");
@@ -307,6 +404,8 @@ const synthesiseStep = createStep({
         const citationList = rankedSources.slice(0, 6).map((s, i) => `[${i + 1}] [${s.title}](${s.url})`).join("\n");
 
         const synthesis = `## Research Results for: "${originalQuery}"
+
+**Confidence:** ${confidence.level.toUpperCase()} — ${confidence.note}
 
 ${tavilyAnswer ? `**Quick Answer:** ${tavilyAnswer}\n\n` : ""}---
 
@@ -338,6 +437,8 @@ ${citationList}
         return {
             synthesis, sessionId, subQueriesUsed: subQueries,
             sources: rankedSources.slice(0, 6).map((s) => ({ title: s.title, url: s.url, finalScore: s.finalScore })),
+            confidence,
+            progress: `✍️ Synthesizing final answer with citations`,
         };
     },
 });

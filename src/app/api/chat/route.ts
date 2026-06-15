@@ -99,6 +99,18 @@ export async function POST(req: NextRequest) {
                     const workflow = mastra.getWorkflow("researchWorkflow");
                     const run = await workflow.createRun();
 
+                    // Watch for step completions and stream progress in real-time
+                    run.watch((event: any) => {
+                        if (
+                            event.type === "workflow-step-result" &&
+                            event.payload?.output?.progress
+                        ) {
+                            writer
+                                .write(encoder.encode(`*${event.payload.output.progress}*\n\n`))
+                                .catch(() => {});
+                        }
+                    });
+
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     const result: any = await run.start({
                         inputData: {
@@ -115,8 +127,12 @@ export async function POST(req: NextRequest) {
                         result?.output;
 
                     if (stepOutput?.synthesis) {
-                        
                         await writer.write(encoder.encode(stepOutput.synthesis));
+
+                        if (stepOutput?.confidence) {
+                            const confidenceLine = `\n\n---\n*Confidence: ${stepOutput.confidence.level.toUpperCase()} — ${stepOutput.confidence.note}*`;
+                            await writer.write(encoder.encode(confidenceLine));
+                        }
                     } else {
                         // Workflow returned nothing useful — fall back to agent
                         await streamAgent(agent, fullMessage, threadId, userEmail, writer, encoder);
@@ -167,6 +183,9 @@ async function streamAgent(
             memory: {
                 thread: threadId,
                 resource: resourceId,
+            },
+            modelSettings: {
+                maxOutputTokens: 2048,
             },
         });
 

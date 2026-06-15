@@ -7,6 +7,12 @@ async function withTimeout<T>(promise: Promise<T>, ms = 15000): Promise<T> {
     return Promise.race([promise, timeout]);
 }
 
+async function waitWithJitter(attempt: number, baseDelay = 1000, maxDelay = 10000) {
+    const backoff = Math.min(maxDelay, baseDelay * Math.pow(2, attempt));
+    const jitter = Math.random() * backoff;
+    await new Promise((resolve) => setTimeout(resolve, jitter));
+}
+
 export async function embedText(text: string, retries = 2): Promise<number[] | null> {
     for (let attempt = 0; attempt <= retries; attempt++) {
         try {
@@ -26,7 +32,7 @@ export async function embedText(text: string, retries = 2): Promise<number[] | n
                 const body = await response.text();
                 console.error(`Voyage API error: ${response.status} ${body}`);
                 if (attempt === retries) return null;
-                await new Promise((r) => setTimeout(r, 3000 * (attempt + 1)));
+                await waitWithJitter(attempt);
                 continue;
             }
 
@@ -36,7 +42,7 @@ export async function embedText(text: string, retries = 2): Promise<number[] | n
         } catch (err) {
             console.error(`Embedding attempt ${attempt + 1} failed:`, err);
             if (attempt === retries) return null;
-            await new Promise((r) => setTimeout(r, 2000));
+            await waitWithJitter(attempt);
         }
     }
     return null;

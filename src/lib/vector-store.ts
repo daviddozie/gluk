@@ -185,3 +185,17 @@ export async function deleteConversationChunks(
         },
     });
 }
+
+// Delete chunks for a specific file in a conversation (prevent orphans on re-indexing)
+export async function deleteFileChunks(
+    conversationId: string,
+    fileName: string
+) {
+    const index = getIndex();
+    await index.deleteMany({
+        filter: {
+            conversationId: { $eq: conversationId },
+            fileName: { $eq: fileName },
+        },
+    });
+}

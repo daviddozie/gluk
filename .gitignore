@@ -14,6 +14,7 @@ build/
 
 # Mastra (local runtime state)
 .mastra/
+/repomix-output.xml
 
 # Database Files (SQLite)
 *.db
