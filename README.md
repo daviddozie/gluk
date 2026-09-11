@@ -45,7 +45,7 @@ Gluk is an AI-powered research assistant you can chat with. Unlike a standard ch
 |---|---|
 | **Framework** | [Next.js 16](https://nextjs.org) (App Router, Turbopack) |
 | **AI orchestration** | [Mastra](https://mastra.ai) + `@mastra/core` |
-| **LLM** | [OpenRouter](https://openrouter.ai) — `nvidia/nemotron-3-nano-30b-a3b:free` by default |
+| **LLM** | [OpenRouter](https://openrouter.ai) — `deepseek/deepseek-chat` by default (configurable via `OPENROUTER_MODEL`) |
 | **Embeddings** | HuggingFace `sentence-transformers/all-MiniLM-L6-v2` |
 | **Vector DB** | [Pinecone](https://pinecone.io) |
 | **Database** | [Turso](https://turso.tech) (LibSQL) — conversations + research sessions |
@@ -187,11 +187,11 @@ Documents are semantically chunked (paragraph → sentence boundaries) and store
 
 ## 🔑 Rate Limits (Free Tier)
 
-The default model (`nvidia/nemotron-3-nano-30b-a3b:free`) allows **50 requests/day** on OpenRouter's free tier. The limit resets at midnight UTC.
+The default model is `deepseek/deepseek-chat` (or customize via `OPENROUTER_MODEL` in `.env.local`).
 
-To increase this:
-- Add $10 credits on OpenRouter → unlocks 1 000 req/day
-- Or switch model: set `OPENROUTER_MODEL` in `.env.local` to any slug from [openrouter.ai/models](https://openrouter.ai/models)
+To configure your model or limits:
+- Set `OPENROUTER_MODEL` in `.env.local` to any slug from [openrouter.ai/models](https://openrouter.ai/models) (e.g. `deepseek/deepseek-chat`, `nvidia/nemotron-3.5-lightning:free`, etc.)
+- Add credits on OpenRouter if using paid models or to unlock higher throughput.
 
 ---
 

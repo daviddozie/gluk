@@ -8,8 +8,6 @@ export const maxDuration = 120;
 function isResearchQuery(message: string): boolean {
     const lower = message.toLowerCase();
 
-    // If the user is clearly asking about an uploaded file, skip research mode —
-    // RAG will answer it without any web search needed.
     const fileKeywords = [
         "in the file", "in the document", "based on the doc", "in the pdf", "in the csv",
         "from the file", "from the document", "uploaded", "attached",
@@ -92,8 +90,8 @@ export async function POST(req: NextRequest) {
             if (isFileQuestion && hasRagContext) {
                 await streamAgent(agent, fullMessage, threadId, userEmail, writer, encoder);
             } else if (shouldUseResearch) {
-
-                await writer.write(encoder.encode("🔍 *Starting deep research…*\n\n"));
+                let inWorkflowThink = true;
+                await writer.write(encoder.encode("<think>\n🔍 Initializing deep research pipeline…\n"));
 
                 try {
                     const workflow = mastra.getWorkflow("researchWorkflow");
@@ -106,7 +104,7 @@ export async function POST(req: NextRequest) {
                             event.payload?.output?.progress
                         ) {
                             writer
-                                .write(encoder.encode(`*${event.payload.output.progress}*\n\n`))
+                                .write(encoder.encode(`${event.payload.output.progress}\n`))
                                 .catch(() => {});
                         }
                     });
@@ -127,6 +125,10 @@ export async function POST(req: NextRequest) {
                         result?.output;
 
                     if (stepOutput?.synthesis) {
+                        if (inWorkflowThink) {
+                            inWorkflowThink = false;
+                            await writer.write(encoder.encode("</think>\n\n"));
+                        }
                         await writer.write(encoder.encode(stepOutput.synthesis));
 
                         if (stepOutput?.confidence) {
@@ -134,11 +136,19 @@ export async function POST(req: NextRequest) {
                             await writer.write(encoder.encode(confidenceLine));
                         }
                     } else {
+                        if (inWorkflowThink) {
+                            inWorkflowThink = false;
+                            await writer.write(encoder.encode("</think>\n\n"));
+                        }
                         // Workflow returned nothing useful — fall back to agent
                         await streamAgent(agent, fullMessage, threadId, userEmail, writer, encoder);
                     }
                 } catch (workflowErr) {
                     console.error("Research workflow error, falling back to agent:", workflowErr);
+                    if (inWorkflowThink) {
+                        inWorkflowThink = false;
+                        await writer.write(encoder.encode("</think>\n\n"));
+                    }
                     await writer.write(
                         encoder.encode("*Research pipeline hit an issue — switching to direct agent mode.*\n\n")
                     );
@@ -178,8 +188,13 @@ async function streamAgent(
     writer: WritableStreamDefaultWriter,
     encoder: TextEncoder
 ) {
+    let inThinkBlock = true;
     try {
+        // Send initial immediate thinking state so the UI reacts instantly
+        await writer.write(encoder.encode("<think>\n🧠 Analyzing request and formulating strategy…\n"));
+
         const response = await agent.stream(message, {
+            maxSteps: 5,
             memory: {
                 thread: threadId,
                 resource: resourceId,
@@ -187,22 +202,74 @@ async function streamAgent(
             modelSettings: {
                 maxOutputTokens: 2048,
             },
+            onStepFinish: async (step: any) => {
+                if (step.toolCalls && step.toolCalls.length > 0) {
+                    for (const tc of step.toolCalls) {
+                        const toolName = tc.payload?.toolName || tc.toolName || "";
+                        const args = tc.payload?.args || tc.args || {};
+                        let label = "";
+
+                        if (toolName === "webSearchTool" || toolName === "web_search") {
+                            label = args.query ? `🔍 Searching web: "${args.query}"` : `🔍 Searching web…`;
+                        } else if (toolName === "webFetchTool" || toolName === "web_fetch") {
+                            label = args.url ? `🌐 Deep reading: ${args.url}` : `🌐 Reading web page…`;
+                        } else if (toolName === "sourceRerankTool" || toolName === "source_rerank") {
+                            label = `📊 Reranking sources for relevance and credibility…`;
+                        } else if (toolName === "exportReportTool" || toolName === "export_report") {
+                            label = `📥 Generating and exporting report (${args.format || "csv"})…`;
+                        } else if (toolName === "saveDigestTool" || toolName === "save_research_digest") {
+                            label = `💾 Saving research digest to database…`;
+                        } else if (toolName === "sendWebhookTool" || toolName === "send_webhook") {
+                            label = `📡 Dispatching webhook notification to: ${args.url || "endpoint"}`;
+                        } else if (toolName === "askFactCheckerTool" || toolName === "consult_fact_checker") {
+                            label = `🕵️ Consulting Fact-Checker sub-agent: "${args.claim ? (args.claim.slice(0, 60) + "…") : "verifying claim"}"`;
+                        } else if (toolName === "askCodeReviewerTool" || toolName === "consult_code_reviewer") {
+                            label = `💻 Consulting Code Reviewer sub-agent: auditing code and security…`;
+                        } else if (toolName) {
+                            label = `⚙️ Executing tool: ${toolName}`;
+                        }
+
+                        if (label) {
+                            if (!inThinkBlock) {
+                                inThinkBlock = true;
+                                await writer.write(encoder.encode("<think>\n")).catch(() => {});
+                            }
+                            await writer.write(encoder.encode(`${label}\n`)).catch(() => {});
+                        }
+                    }
+                }
+            },
         });
 
         for await (const chunk of response.textStream) {
+            if (inThinkBlock) {
+                inThinkBlock = false;
+                await writer.write(encoder.encode("</think>\n\n")).catch(() => {});
+            }
             await writer.write(encoder.encode(chunk));
         }
+
+        if (inThinkBlock) {
+            inThinkBlock = false;
+            await writer.write(encoder.encode("</think>\n\n")).catch(() => {});
+        }
     } catch (err: unknown) {
-        // Surface rate-limit errors with a clear, actionable message
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes("429") || msg.toLowerCase().includes("rate limit")) {
             await writer.write(
                 encoder.encode(
-                    " **Daily rate limit reached** — the free model allows 50 requests per day and today's quota is now used up.\n\n" +
+                    "**Daily rate limit reached** — the model quota has been reached.\n\n" +
                     "The limit resets at **midnight UTC**. You can also:\n" +
-                    "- Add credits on [OpenRouter](https://openrouter.ai) to unlock 1 000 req/day\n" +
-                    "- Switch to a different free model in your `.env.local` (`OPENROUTER_MODEL`)\n\n" +
+                    "- Add credits on [OpenRouter](https://openrouter.ai) to unlock higher limits\n" +
+                    "- Switch to a different model in your `.env.local` (`OPENROUTER_MODEL`)\n\n" +
                     "In the meantime, **uploaded documents are still searchable** — your files are stored and will be ready when the limit resets."
+                )
+            );
+        } else if (msg.includes("unavailable") || msg.includes("AI_APICallError") || msg.toLowerCase().includes("openrouter")) {
+            await writer.write(
+                encoder.encode(
+                    `**LLM Provider Error:** ${msg}\n\n` +
+                    "You can switch the model by setting `OPENROUTER_MODEL` in your `.env.local` (e.g. `OPENROUTER_MODEL=deepseek/deepseek-chat`)."
                 )
             );
         } else {

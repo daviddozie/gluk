@@ -8,6 +8,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import remarkGfm from "remark-gfm";
 import GlukLogo from "./svg";
+import ThoughtProcess from "./thought-process";
 
 interface MessageBubbleProps {
   message: Message;
@@ -578,16 +579,54 @@ function TtsControls({
   );
 }
 
-// ─── Typing / Streaming indicators ───────────────────────────────────────────
+// ─── Thought & Stream Parsing ────────────────────────────────────────────────
 
-function TypingIndicator() {
-  return (
-    <div className="flex items-center gap-1 py-1">
-      <span className="w-2 h-2 rounded-full bg-current opacity-60 animate-bounce" style={{ animationDelay: "0ms" }} />
-      <span className="w-2 h-2 rounded-full bg-current opacity-60 animate-bounce" style={{ animationDelay: "150ms" }} />
-      <span className="w-2 h-2 rounded-full bg-current opacity-60 animate-bounce" style={{ animationDelay: "300ms" }} />
-    </div>
-  );
+function parseThoughtAndContent(raw: string, isStreaming: boolean): {
+  thoughtText: string;
+  contentText: string;
+  isThinking: boolean;
+} {
+  if (!raw) {
+    return {
+      thoughtText: "",
+      contentText: "",
+      isThinking: isStreaming,
+    };
+  }
+
+  let thoughtText = "";
+  let contentText = "";
+  let isCurrentlyThinking = false;
+
+  let remaining = raw;
+  while (true) {
+    const thinkStart = remaining.indexOf("<think>");
+    if (thinkStart === -1) {
+      contentText += remaining;
+      break;
+    }
+
+    contentText += remaining.slice(0, thinkStart);
+
+    const thinkEnd = remaining.indexOf("</think>", thinkStart);
+    if (thinkEnd !== -1) {
+      const thoughtChunk = remaining.slice(thinkStart + 7, thinkEnd).trim();
+      thoughtText += (thoughtText ? "\n" : "") + thoughtChunk;
+      remaining = remaining.slice(thinkEnd + 8);
+    } else {
+      const thoughtChunk = remaining.slice(thinkStart + 7).trim();
+      thoughtText += (thoughtText ? "\n" : "") + thoughtChunk;
+      isCurrentlyThinking = isStreaming;
+      remaining = "";
+      break;
+    }
+  }
+
+  return {
+    thoughtText: thoughtText.trim(),
+    contentText: contentText.trim(),
+    isThinking: isCurrentlyThinking || (isStreaming && !contentText.trim()),
+  };
 }
 
 function StreamingCursor() {
@@ -600,6 +639,10 @@ export default function MessageBubble({ message, theme }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const { data: session } = useSession();
   const isDark = theme === "dark";
+
+  const { thoughtText, contentText, isThinking } = isUser
+    ? { thoughtText: "", contentText: message.content, isThinking: false }
+    : parseThoughtAndContent(message.content, Boolean(message.isStreaming));
 
   const [ttsWords, setTtsWords] = useState<WordTimestamp[]>([]);
   const [ttsTime, setTtsTime] = useState(0);
@@ -662,13 +705,21 @@ export default function MessageBubble({ message, theme }: MessageBubbleProps) {
           </div>
         ) : (
           <div className={`text-sm leading-relaxed w-full transition-colors duration-300 ${isDark ? "text-white/85" : "text-black/80"}`}>
-            {message.isStreaming && !message.content ? (
-              <TypingIndicator />
-            ) : (
+            {/* Show Thought Process / Agent Activity if thoughts exist OR while thinking */}
+            {(thoughtText || isThinking) && (
+              <ThoughtProcess
+                thoughtText={thoughtText}
+                isThinking={isThinking}
+                isDark={isDark}
+              />
+            )}
+
+            {/* If response content is present, render markdown */}
+            {contentText ? (
               <>
                 {isSpeaking ? (
                   <KaraokeMarkdown
-                    content={message.content}
+                    content={contentText}
                     words={ttsWords}
                     currentTime={ttsTime}
                     isDark={isDark}
@@ -713,20 +764,20 @@ export default function MessageBubble({ message, theme }: MessageBubbleProps) {
                       hr() { return <hr className={`my-4 transition-colors duration-300 ${isDark ? "border-white/10" : "border-black/10"}`} />; },
                     }}
                   >
-                    {message.content}
+                    {contentText}
                   </ReactMarkdown>
                 )}
                 {message.isStreaming && <StreamingCursor />}
               </>
-            )}
+            ) : null}
           </div>
         )}
 
-        {!isUser && !message.isStreaming && message.content && (
+        {!isUser && !message.isStreaming && contentText && (
           <div className="flex items-center gap-1 mt-1">
-            <CopyButton text={message.content} isDark={isDark} />
+            <CopyButton text={contentText} isDark={isDark} />
             <TtsControls
-              text={message.content}
+              text={contentText}
               isDark={isDark}
               onWordsLoaded={handleWordsLoaded}
               onTimeUpdate={handleTimeUpdate}

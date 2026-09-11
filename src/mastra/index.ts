@@ -3,10 +3,12 @@ import { PinoLogger } from '@mastra/loggers';
 import { LibSQLStore } from '@mastra/libsql';
 import { Observability, DefaultExporter, SensitiveDataFilter } from '@mastra/observability';
 import { glukAgent } from './agents/gluk-agent';
+import { factCheckerAgent } from './agents/fact-checker-agent';
+import { codeReviewerAgent } from './agents/code-reviewer-agent';
 import { researchWorkflow } from './workflows/research-workflow';
 
 export const mastra = new Mastra({
-  agents: { glukAgent },
+  agents: { glukAgent, factCheckerAgent, codeReviewerAgent },
   workflows: { researchWorkflow },
   storage: new LibSQLStore({
     id: "gluk-memory",
