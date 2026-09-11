@@ -6,7 +6,7 @@ import { NextRequest } from "next/server";
 export async function GET() {
     const session = await getServerSession(authOptions);
     if (!session?.user?.email) {
-        return Response.json({ error: "Unauthorized" }, { status: 401 });
+        return Response.json({ conversations: [] });
     }
 
     try {
@@ -21,7 +21,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session?.user?.email) {
-        return Response.json({ error: "Unauthorized" }, { status: 401 });
+        return Response.json({ success: true, guest: true });
     }
 
     try {

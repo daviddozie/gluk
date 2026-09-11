@@ -15,12 +15,12 @@ export default async function proxy(req: NextRequest) {
         return NextResponse.next();
     }
 
-    // Redirect to login if not authenticated
-    if (!token) {
-        const loginUrl = new URL("/login", req.url);
-        return NextResponse.redirect(loginUrl);
+    // Guests have no thread memory; redirect any /c/* requests to '/'
+    if (pathname.startsWith("/c/") && !token) {
+        return NextResponse.redirect(new URL("/", req.url));
     }
 
+    // Publicly accessible paths (guest chat, login, next assets)
     return NextResponse.next();
 }
 

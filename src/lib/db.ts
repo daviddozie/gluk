@@ -52,6 +52,24 @@ export async function getUserConversations(userEmail: string) {
     }));
 }
 
+export async function getConversation(userEmail: string, id: string) {
+    await initDB();
+    const result = await getDB().execute({
+        sql: `SELECT * FROM conversations WHERE id = ? AND user_email = ? LIMIT 1`,
+        args: [id, userEmail],
+    });
+    if (result.rows.length === 0) return null;
+    const row = result.rows[0];
+    return {
+        id: row.id as string,
+        title: row.title as string,
+        messages: JSON.parse(row.messages as string),
+        createdAt: new Date(row.created_at as string),
+        updatedAt: new Date(row.updated_at as string),
+        pinned: row.pinned === 1,
+    };
+}
+
 export async function saveConversation(
     userEmail: string,
     id: string,

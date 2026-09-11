@@ -29,11 +29,7 @@ function isResearchQuery(message: string): boolean {
 
 export async function POST(req: NextRequest) {
     const session = await getServerSession(authOptions);
-    if (!session?.user) {
-        return new Response("Unauthorized", { status: 401 });
-    }
-
-    const userEmail = session.user.email ?? session.user.name ?? "anonymous";
+    const userEmail = session?.user?.email ?? session?.user?.name ?? "guest";
 
     const { message, threadId, files, useResearch } = await req.json();
 
@@ -159,15 +155,29 @@ export async function POST(req: NextRequest) {
                 await streamAgent(agent, fullMessage, threadId, userEmail, writer, encoder);
             }
 
-        } catch (err) {
-            console.error("Chat route error:", err);
-            await writer.write(
-                encoder.encode("\n\nSorry, something went wrong. Please try again.")
-            );
+        } catch (err: unknown) {
+            const isAbort =
+                (err instanceof Error && (err.name === "AbortError" || err.name === "ResponseAborted" || err.message?.includes("aborted"))) ||
+                (typeof err === "object" && err !== null && "name" in err && (err as { name: string }).name === "ResponseAborted");
+
+            if (!isAbort) {
+                console.error("Chat route error:", err);
+                try {
+                    await writer.write(
+                        encoder.encode("\n\nSorry, something went wrong. Please try again.")
+                    );
+                } catch {
+                    // Stream might already be closed or errored
+                }
+            }
         } finally {
-            await writer.close();
+            try {
+                await writer.close();
+            } catch {
+                // Stream might already be closed or aborted
+            }
         }
-    })();
+    })().catch(() => {});
 
     return new Response(readable, {
         headers: {
@@ -246,7 +256,12 @@ async function streamAgent(
                 inThinkBlock = false;
                 await writer.write(encoder.encode("</think>\n\n")).catch(() => {});
             }
-            await writer.write(encoder.encode(chunk));
+            try {
+                await writer.write(encoder.encode(chunk));
+            } catch {
+                // Stream closed by client abort
+                return;
+            }
         }
 
         if (inThinkBlock) {
@@ -254,6 +269,11 @@ async function streamAgent(
             await writer.write(encoder.encode("</think>\n\n")).catch(() => {});
         }
     } catch (err: unknown) {
+        const isAbort =
+            (err instanceof Error && (err.name === "AbortError" || err.name === "ResponseAborted" || err.message?.includes("aborted"))) ||
+            (typeof err === "object" && err !== null && "name" in err && (err as { name: string }).name === "ResponseAborted");
+        if (isAbort) return;
+
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes("429") || msg.toLowerCase().includes("rate limit")) {
             await writer.write(
@@ -264,14 +284,14 @@ async function streamAgent(
                     "- Switch to a different model in your `.env.local` (`OPENROUTER_MODEL`)\n\n" +
                     "In the meantime, **uploaded documents are still searchable** — your files are stored and will be ready when the limit resets."
                 )
-            );
+            ).catch(() => {});
         } else if (msg.includes("unavailable") || msg.includes("AI_APICallError") || msg.toLowerCase().includes("openrouter")) {
             await writer.write(
                 encoder.encode(
                     `**LLM Provider Error:** ${msg}\n\n` +
                     "You can switch the model by setting `OPENROUTER_MODEL` in your `.env.local` (e.g. `OPENROUTER_MODEL=deepseek/deepseek-chat`)."
                 )
-            );
+            ).catch(() => {});
         } else {
             throw err; 
         }
