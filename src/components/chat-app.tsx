@@ -195,10 +195,16 @@ export default function ChatApp({ initialConversationId }: ChatAppProps) {
       }
 
       const chatMessage = content.trim() || "Please summarise and answer questions about the attached file(s).";
+      const clientTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Africa/Lagos";
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: chatMessage, threadId: convId, files: uploadedFiles }),
+        body: JSON.stringify({
+          message: chatMessage,
+          threadId: convId,
+          files: uploadedFiles,
+          timezone: clientTimezone,
+        }),
         signal: abortControllerRef.current.signal,
       });
 

@@ -9,8 +9,8 @@ export const rerankStep = createStep({
     inputSchema: RerankStepInput,
     outputSchema: RerankStepOutput,
     execute: async ({ inputData }) => {
-        const { enrichedSources, originalQuery, sessionId, ragContext, subQueries, tavilyAnswer } = inputData;
-        const rankedSources = rerankSources(originalQuery, enrichedSources, 8);
+        const { enrichedSources, originalQuery, sessionId, ragContext, subQueries, tavilyAnswer, timezone } = inputData;
+        const rankedSources = rerankSources(originalQuery, enrichedSources, 8, timezone);
 
         await saveResearchSources(
             rankedSources.map((s) => ({
@@ -33,7 +33,8 @@ export const rerankStep = createStep({
             subQueries,
             tavilyAnswer,
             rankedSources,
-            progress: `📊 Reranked ${rankedSources.length} sources by credibility and relevance`,
+            timezone,
+            progress: `📊 Reranked ${rankedSources.length} sources by credibility, relevance, and recency`,
         };
     },
 });

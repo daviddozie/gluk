@@ -7,13 +7,13 @@ export const gatherStep = createStep({
     inputSchema: GatherStepInput,
     outputSchema: GatherStepOutput,
     execute: async ({ inputData }) => {
-        const { sessionId, subQueries, originalQuery, ragContext } = inputData;
+        const { sessionId, subQueries, originalQuery, ragContext, timezone } = inputData;
         const allResults: RawSource[] = [];
         let tavilyAnswer = "";
 
         for (const subQuery of subQueries) {
             try {
-                const result = await runWebSearch(subQuery, sessionId);
+                const result = await runWebSearch(subQuery, sessionId, timezone);
                 if (result.answer && !tavilyAnswer) tavilyAnswer = result.answer;
                 allResults.push(...result.results);
                 await sleep(300);
@@ -36,6 +36,7 @@ export const gatherStep = createStep({
             subQueries: inputData.subQueries,
             rawSources,
             tavilyAnswer,
+            timezone,
             progress: `🔎 Searched ${subQueries.length} angles: ${subQueries.join(", ")}`,
         };
     },

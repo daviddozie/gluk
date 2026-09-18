@@ -7,11 +7,19 @@ export const ResearchInput = z.object({
     conversationId: z.string(),
     userEmail: z.string(),
     ragContext: z.string().optional().default(""),
+    timezone: z.string().optional(),
 });
 
 export const ResearchOutput = z.object({
     synthesis: z.string(),
-    sources: z.array(z.object({ title: z.string(), url: z.string(), finalScore: z.number() })),
+    sources: z.array(
+        z.object({
+            title: z.string(),
+            url: z.string(),
+            finalScore: z.number(),
+            publishedDate: z.string().optional(),
+        })
+    ),
     sessionId: z.string(),
     subQueriesUsed: z.array(z.string()),
     confidence: z.object({
@@ -29,6 +37,7 @@ export const PlanStepOutput = z.object({
     userEmail: z.string(),
     ragContext: z.string(),
     subQueries: z.array(z.string()),
+    timezone: z.string().optional(),
     progress: z.string().optional(),
 });
 
@@ -39,6 +48,7 @@ export const GatherStepInput = z.object({
     userEmail: z.string(),
     ragContext: z.string(),
     subQueries: z.array(z.string()),
+    timezone: z.string().optional(),
 });
 
 export const GatherStepOutput = z.object({
@@ -46,8 +56,17 @@ export const GatherStepOutput = z.object({
     originalQuery: z.string(),
     ragContext: z.string(),
     subQueries: z.array(z.string()),
-    rawSources: z.array(z.object({ title: z.string(), url: z.string(), content: z.string(), score: z.number() })),
+    rawSources: z.array(
+        z.object({
+            title: z.string(),
+            url: z.string(),
+            content: z.string(),
+            score: z.number(),
+            publishedDate: z.string().optional(),
+        })
+    ),
     tavilyAnswer: z.string(),
+    timezone: z.string().optional(),
     progress: z.string().optional(),
 });
 
@@ -56,8 +75,17 @@ export const DeepFetchStepInput = z.object({
     originalQuery: z.string(),
     ragContext: z.string(),
     subQueries: z.array(z.string()),
-    rawSources: z.array(z.object({ title: z.string(), url: z.string(), content: z.string(), score: z.number() })),
+    rawSources: z.array(
+        z.object({
+            title: z.string(),
+            url: z.string(),
+            content: z.string(),
+            score: z.number(),
+            publishedDate: z.string().optional(),
+        })
+    ),
     tavilyAnswer: z.string(),
+    timezone: z.string().optional(),
 });
 
 export const DeepFetchStepOutput = z.object({
@@ -65,8 +93,17 @@ export const DeepFetchStepOutput = z.object({
     originalQuery: z.string(),
     ragContext: z.string(),
     subQueries: z.array(z.string()),
-    enrichedSources: z.array(z.object({ title: z.string(), url: z.string(), content: z.string(), score: z.number() })),
+    enrichedSources: z.array(
+        z.object({
+            title: z.string(),
+            url: z.string(),
+            content: z.string(),
+            score: z.number(),
+            publishedDate: z.string().optional(),
+        })
+    ),
     tavilyAnswer: z.string(),
+    timezone: z.string().optional(),
     progress: z.string().optional(),
 });
 
@@ -75,8 +112,17 @@ export const RerankStepInput = z.object({
     originalQuery: z.string(),
     ragContext: z.string(),
     subQueries: z.array(z.string()),
-    enrichedSources: z.array(z.object({ title: z.string(), url: z.string(), content: z.string(), score: z.number() })),
+    enrichedSources: z.array(
+        z.object({
+            title: z.string(),
+            url: z.string(),
+            content: z.string(),
+            score: z.number(),
+            publishedDate: z.string().optional(),
+        })
+    ),
     tavilyAnswer: z.string(),
+    timezone: z.string().optional(),
 });
 
 export const RerankStepOutput = z.object({
@@ -93,9 +139,12 @@ export const RerankStepOutput = z.object({
             finalScore: z.number(),
             credibilityScore: z.number(),
             relevanceScore: z.number(),
+            freshnessScore: z.number().optional(),
+            publishedDate: z.string().optional(),
         })
     ),
     tavilyAnswer: z.string(),
+    timezone: z.string().optional(),
     progress: z.string().optional(),
 });
 
@@ -113,9 +162,12 @@ export const SynthesiseStepInput = z.object({
             finalScore: z.number(),
             credibilityScore: z.number(),
             relevanceScore: z.number(),
+            freshnessScore: z.number().optional(),
+            publishedDate: z.string().optional(),
         })
     ),
     tavilyAnswer: z.string(),
+    timezone: z.string().optional(),
 });
 
 // ─── TypeScript Types ────────────────────────────────────────────────────────
@@ -136,6 +188,7 @@ export interface RawSource {
     url: string;
     content: string;
     score: number;
+    publishedDate?: string;
 }
 
 export type EnrichedSource = RawSource;
@@ -144,6 +197,7 @@ export interface RankedSource extends RawSource {
     finalScore: number;
     credibilityScore: number;
     relevanceScore: number;
+    freshnessScore?: number;
 }
 
 export interface Confidence {

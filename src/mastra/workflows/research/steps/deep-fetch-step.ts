@@ -7,7 +7,7 @@ export const deepFetchStep = createStep({
     inputSchema: DeepFetchStepInput,
     outputSchema: DeepFetchStepOutput,
     execute: async ({ inputData }) => {
-        const { rawSources, sessionId, originalQuery, ragContext, subQueries, tavilyAnswer } = inputData;
+        const { rawSources, sessionId, originalQuery, ragContext, subQueries, tavilyAnswer, timezone } = inputData;
         const sorted = [...rawSources].sort((a, b) => b.score - a.score);
         const toFetch = sorted.slice(0, 4);
         const rest = sorted.slice(4);
@@ -16,7 +16,12 @@ export const deepFetchStep = createStep({
             toFetch.map(async (src) => {
                 const fetched = await runWebFetch(src.url);
                 if (fetched.success && fetched.text.length > 200) {
-                    return { ...src, title: fetched.title || src.title, content: src.content + "\n\n" + fetched.text };
+                    return {
+                        ...src,
+                        title: fetched.title || src.title,
+                        content: src.content + "\n\n" + fetched.text,
+                        publishedDate: src.publishedDate,
+                    };
                 }
                 return src;
             })
@@ -37,6 +42,7 @@ export const deepFetchStep = createStep({
             ragContext,
             subQueries,
             tavilyAnswer,
+            timezone,
             enrichedSources: [...enriched, ...rest],
             progress: `🌐 Deep-read ${enriched.length} sources for full content`,
         };

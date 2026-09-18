@@ -1,24 +1,35 @@
 import { glukAgent } from "../../agents/gluk-agent";
 import type { RawSource, RankedSource, Confidence } from "./schemas";
+import {
+    getSystemTemporalContext,
+    resolveQueryTemporalExpressions,
+    evaluateFreshness,
+    TavilyTimeRange,
+} from "@/lib/temporal";
+import { computeFreshnessScore } from "../../tools/source-rerank-tool";
 
 // ─── Query & Date Constraints ────────────────────────────────────────────────
 
-export function extractDateConstraint(query: string): {
+export function extractDateConstraint(
+    query: string,
+    timezone?: string
+): {
     hasRecent: boolean;
     hasYear: number | null;
     boostRecent: boolean;
+    tavilyTimeRange?: TavilyTimeRange;
+    searchConstraint?: string;
 } {
-    const lower = query.toLowerCase();
-    const recentKeywords = ["latest", "recent", "new", "current", "today", "now", "2025", "2024"];
-    const hasRecent = recentKeywords.some((kw) => lower.includes(kw));
-    const yearMatch = query.match(/\b(20[2-9][0-9])\b/);
-    const hasYear = yearMatch ? parseInt(yearMatch[0]) : null;
-    const techNewsTopics = ["ai", "model", "gpt", "llm", "breakthrough", "discovery", "release", "announcement"];
-    const isRecentTopic = techNewsTopics.some((topic) => lower.includes(topic));
+    const temporalCtx = getSystemTemporalContext(timezone);
+    const resolved = resolveQueryTemporalExpressions(query, temporalCtx);
+    const freshness = evaluateFreshness(query, temporalCtx);
+
     return {
-        hasRecent: hasRecent || isRecentTopic,
-        hasYear,
-        boostRecent: hasRecent || isRecentTopic,
+        hasRecent: freshness.isTimeSensitive,
+        hasYear: resolved.targetYear ?? null,
+        boostRecent: freshness.isTimeSensitive,
+        tavilyTimeRange: resolved.tavilyTimeRange,
+        searchConstraint: resolved.searchConstraint,
     };
 }
 
@@ -26,38 +37,51 @@ export function extractDateConstraint(query: string): {
 
 export async function runWebSearch(
     query: string,
-    sessionId: string
+    sessionId: string,
+    timezone?: string
 ): Promise<{ answer: string; results: RawSource[] }> {
-    const dateConstraint = extractDateConstraint(query);
+    const temporalCtx = getSystemTemporalContext(timezone);
+    const dateConstraint = extractDateConstraint(query, timezone);
 
     let enhancedQuery = query;
-    if (dateConstraint.hasYear) {
+    if (dateConstraint.hasYear && dateConstraint.hasYear !== temporalCtx.year) {
         enhancedQuery = `${query} after:${dateConstraint.hasYear}-01-01`;
     } else if (dateConstraint.boostRecent) {
-        const currentYear = new Date().getFullYear();
-        enhancedQuery = `${query} after:${currentYear - 1}-01-01`;
+        // Boost towards current year
+        if (!query.includes(String(temporalCtx.year))) {
+            enhancedQuery = `${query} ${temporalCtx.year}`;
+        }
+    }
+
+    const requestBody: Record<string, unknown> = {
+        api_key: process.env.TAVILY_API_KEY,
+        query: enhancedQuery,
+        search_depth: "advanced",
+        include_answer: true,
+        max_results: 6,
+    };
+
+    if (dateConstraint.tavilyTimeRange) {
+        requestBody.time_range = dateConstraint.tavilyTimeRange;
     }
 
     const response = await fetch("https://api.tavily.com/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            api_key: process.env.TAVILY_API_KEY,
-            query: enhancedQuery,
-            search_depth: "advanced",
-            include_answer: true,
-            max_results: 6,
-        }),
+        body: JSON.stringify(requestBody),
     });
+
     if (!response.ok) throw new Error(`Tavily error (${sessionId}): ${response.statusText}`);
     const data = await response.json();
+
     return {
         answer: (data.answer ?? "") as string,
         results: (data.results ?? []).map(
-            (r: { title: string; url: string; content: string; score?: number }) => ({
+            (r: { title: string; url: string; content: string; published_date?: string; publishedDate?: string; score?: number }) => ({
                 title: r.title,
                 url: r.url,
                 content: r.content,
+                publishedDate: r.published_date || r.publishedDate,
                 score: r.score ?? 0,
             })
         ) as RawSource[],
@@ -113,8 +137,12 @@ export async function runWebFetch(
 export function rerankSources(
     query: string,
     sources: RawSource[],
-    topK = 8
+    topK = 8,
+    timezone?: string
 ): RankedSource[] {
+    const temporalCtx = getSystemTemporalContext(timezone);
+    const freshnessEval = evaluateFreshness(query, temporalCtx);
+
     const queryTerms = new Set(
         query.toLowerCase().split(/\W+/).filter((t) => t.length > 2)
     );
@@ -138,8 +166,29 @@ export function rerankSources(
         } catch { /* keep baseline */ }
 
         credibilityScore = Math.max(0, Math.min(1, credibilityScore));
-        const finalScore = relevanceScore * 0.6 + credibilityScore * 0.4;
-        return { ...s, relevanceScore, credibilityScore, finalScore };
+
+        const freshnessScore = computeFreshnessScore(
+            s.publishedDate,
+            s.url,
+            s.content,
+            freshnessEval.isTimeSensitive,
+            temporalCtx.year
+        );
+
+        let finalScore: number;
+        if (freshnessEval.isTimeSensitive) {
+            finalScore = relevanceScore * 0.45 + credibilityScore * 0.25 + freshnessScore * 0.3;
+        } else {
+            finalScore = relevanceScore * 0.6 + credibilityScore * 0.3 + freshnessScore * 0.1;
+        }
+
+        return {
+            ...s,
+            relevanceScore: parseFloat(relevanceScore.toFixed(4)),
+            credibilityScore: parseFloat(credibilityScore.toFixed(4)),
+            freshnessScore: parseFloat(freshnessScore.toFixed(4)),
+            finalScore: parseFloat(finalScore.toFixed(4)),
+        };
     });
 
     scored.sort((a, b) => b.finalScore - a.finalScore);
@@ -158,18 +207,25 @@ export function rerankSources(
 
 // ─── LLM Planning ────────────────────────────────────────────────────────────
 
-export async function llmPlan(query: string): Promise<string[]> {
+export async function llmPlan(query: string, timezone?: string): Promise<string[]> {
+    const temporalCtx = getSystemTemporalContext(timezone);
+
     const prompt = `You are a research planner. Break this user query into 3-5 specific, searchable sub-queries that cover different angles or aspects.
+
+Current Temporal Context:
+- Today's Date: ${temporalCtx.dateString}
+- Current Year: ${temporalCtx.year}
+- Timezone: ${temporalCtx.timezone}
 
 Rules:
 - Each sub-query should be a complete, standalone search phrase
 - Cover complementary angles (e.g., definitions, recent developments, technical details, comparisons)
-- Do NOT include the year unless the query is specifically about recent events
+- If the user query is about recent, latest, or current events (e.g. today, this week, recently), anchor search phrases to the current calendar year (${temporalCtx.year}) or time window. Do NOT search for outdated years like 2024 or 2025 unless the user specifically asked for that historical year.
 - Return ONLY a JSON array of strings, no other text
 
 Query: "${query}"
 
-Example output: ["quantum computing basics", "quantum computing 2025 breakthroughs", "quantum computing vs classical computing comparison"]
+Example output for a current topic: ["example topic overview", "example topic ${temporalCtx.year} updates", "example topic key developments"]
 
 Now generate for the query above.`;
 
@@ -189,14 +245,14 @@ Now generate for the query above.`;
         return [query];
     } catch (error) {
         console.error("LLM planning failed, falling back to heuristic:", error);
-        return [query, `${query} explained`, `${query} latest`];
+        return [query, `${query} ${temporalCtx.year}`, `${query} latest`];
     }
 }
 
 // ─── Confidence Calculation ──────────────────────────────────────────────────
 
 export function calculateConfidence(
-    rankedSources: Array<{ finalScore: number; credibilityScore: number }>,
+    rankedSources: Array<{ finalScore: number; credibilityScore: number; freshnessScore?: number }>,
     tavilyAnswer: string
 ): Confidence {
     const bestFinalScore = rankedSources.length > 0 ? rankedSources[0].finalScore : 0;

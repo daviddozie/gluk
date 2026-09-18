@@ -9,9 +9,9 @@ export const planStep = createStep({
     inputSchema: ResearchInput,
     outputSchema: PlanStepOutput,
     execute: async ({ inputData }) => {
-        const { query, conversationId, userEmail, ragContext } = inputData;
+        const { query, conversationId, userEmail, ragContext, timezone } = inputData;
         const sessionId = nanoid();
-        const subQueries = await llmPlan(query);
+        const subQueries = await llmPlan(query, timezone);
 
         await saveResearchSession({
             id: sessionId,
@@ -29,6 +29,7 @@ export const planStep = createStep({
             userEmail,
             ragContext: ragContext ?? "",
             subQueries,
+            timezone,
             progress: `📋 Planning research strategy for "${query.slice(0, 50)}${query.length > 50 ? "..." : ""}" — ${subQueries.length} angles identified`,
         };
     },

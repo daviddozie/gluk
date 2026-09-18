@@ -1,27 +1,94 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
+import {
+    evaluateFreshness,
+    getSystemTemporalContext,
+} from "@/lib/temporal";
 
-const SourceSchema = z.object({
+export const SourceSchema = z.object({
     title: z.string(),
     url: z.string(),
     content: z.string(),
+    publishedDate: z.string().optional(),
     score: z.number().optional().default(0),
 });
 
+export type SourceType = z.infer<typeof SourceSchema>;
+
 /**
- * Reranks a list of search results / fetched sources by relevance to the query.
- * Uses a lexical TF-IDF-style heuristic (no external API needed, free to run).
- * Returns sources sorted by combined relevance + credibility score.
+ * Computes a freshness score (0.0 to 1.0) based on source published date
+ * and temporal requirements of the query.
+ */
+export function computeFreshnessScore(
+    publishedDateStr: string | undefined,
+    url: string,
+    content: string,
+    isTimeSensitive: boolean,
+    targetYear: number = getSystemTemporalContext().year
+): number {
+    let extractedYear: number | null = null;
+    let publishedMs: number | null = null;
+
+    if (publishedDateStr) {
+        const parsed = Date.parse(publishedDateStr);
+        if (!isNaN(parsed)) {
+            publishedMs = parsed;
+            extractedYear = new Date(parsed).getUTCFullYear();
+        } else {
+            const ym = publishedDateStr.match(/\b(20[2-9][0-9])\b/);
+            if (ym) extractedYear = parseInt(ym[1], 10);
+        }
+    }
+
+    // If not in publishedDate, attempt extraction from URL (e.g. /2026/09/ or 2026-09)
+    if (!extractedYear) {
+        const urlYearMatch = url.match(/\b(20[2-9][0-9])\b/);
+        if (urlYearMatch) extractedYear = parseInt(urlYearMatch[1], 10);
+    }
+
+    // If query is not time-sensitive, freshness is a minor secondary signal
+    if (!isTimeSensitive) {
+        if (!extractedYear) return 0.5;
+        if (extractedYear >= targetYear) return 0.8;
+        if (extractedYear === targetYear - 1) return 0.6;
+        return 0.4;
+    }
+
+    // For time-sensitive queries:
+    const nowMs = Date.now();
+    if (publishedMs) {
+        const ageHours = (nowMs - publishedMs) / (1000 * 60 * 60);
+        if (ageHours <= 24) return 1.0; // Breaking / today
+        if (ageHours <= 24 * 7) return 0.95; // This past week
+        if (ageHours <= 24 * 30) return 0.9; // This past month
+        if (ageHours <= 24 * 90) return 0.75; // This quarter
+        if (ageHours <= 24 * 365) return 0.5; // Within past year
+        return 0.15; // Older than 1 year
+    }
+
+    if (extractedYear) {
+        if (extractedYear >= targetYear) return 0.85;
+        if (extractedYear === targetYear - 1) return 0.45;
+        return 0.1; // Stale year for recent queries
+    }
+
+    // Default neutral if no date indicators found
+    return 0.4;
+}
+
+/**
+ * Reranks a list of search results / fetched sources by relevance to the query,
+ * source credibility, and publication freshness.
  */
 export const sourceRerankTool = createTool({
     id: "source_rerank",
     description:
-        "Rerank and deduplicate a list of sources by relevance to the research query, source credibility, and content quality. Always call this after gathering multiple sources to surface the best evidence before synthesising.",
+        "Rerank and deduplicate a list of sources by relevance to the research query, source credibility, and publication date freshness. Prioritizes recent sources for time-sensitive queries.",
     inputSchema: z.object({
         query: z.string().describe("The research question / topic to rank sources against"),
         sources: z
             .array(SourceSchema)
-            .describe("Array of sources to rerank"),
+            .describe("Array of sources to rerank, optionally including publishedDate"),
         topK: z
             .number()
             .optional()
@@ -34,6 +101,7 @@ export const sourceRerankTool = createTool({
                 finalScore: z.number(),
                 credibilityScore: z.number(),
                 relevanceScore: z.number(),
+                freshnessScore: z.number(),
             })
         ),
         droppedCount: z.number(),
@@ -49,12 +117,29 @@ export const sourceRerankTool = createTool({
         });
 
         const queryTerms = tokenise(query);
+        const freshnessEval = evaluateFreshness(query);
+        const currentYear = getSystemTemporalContext().year;
 
         const scored = unique.map((source) => {
             const relevanceScore = computeRelevance(queryTerms, source.title + " " + source.content);
             const credibilityScore = computeCredibility(source.url, source.content);
-            // Weight: relevance 60%, credibility 40%
-            const finalScore = relevanceScore * 0.6 + credibilityScore * 0.4;
+            const freshnessScore = computeFreshnessScore(
+                source.publishedDate,
+                source.url,
+                source.content,
+                freshnessEval.isTimeSensitive,
+                currentYear
+            );
+
+            // Dynamically balance weights depending on query freshness requirement:
+            let finalScore: number;
+            if (freshnessEval.isTimeSensitive) {
+                // For time-sensitive queries, recency is weighted heavily (30%)
+                finalScore = relevanceScore * 0.45 + credibilityScore * 0.25 + freshnessScore * 0.3;
+            } else {
+                // Evergreen query: relevance 60%, credibility 30%, freshness 10%
+                finalScore = relevanceScore * 0.6 + credibilityScore * 0.3 + freshnessScore * 0.1;
+            }
 
             return {
                 ...source,
@@ -62,6 +147,7 @@ export const sourceRerankTool = createTool({
                 finalScore: parseFloat(finalScore.toFixed(4)),
                 credibilityScore: parseFloat(credibilityScore.toFixed(4)),
                 relevanceScore: parseFloat(relevanceScore.toFixed(4)),
+                freshnessScore: parseFloat(freshnessScore.toFixed(4)),
             };
         });
 
@@ -97,7 +183,6 @@ function computeRelevance(queryTerms: string[], docText: string): number {
         const tf = (docFreq.get(term) ?? 0) / totalDocTerms;
         score += tf * (1 + Math.log(1 + (docFreq.get(term) ?? 0)));
     }
-    // Normalise to [0,1]
     return Math.min(score / queryTerms.length, 1);
 }
 

@@ -15,16 +15,20 @@ export const synthesiseStep = createStep({
 
         const evidenceBlock = rankedSources
             .slice(0, 6)
-            .map(
-                (s, i) =>
-                    `[Source ${i + 1}] ${s.title}\nURL: ${s.url}\nRelevance: ${(s.relevanceScore * 100).toFixed(0)}% | Credibility: ${(s.credibilityScore * 100).toFixed(0)}%\n${s.content.slice(0, 1200)}`
-            )
+            .map((s, i) => {
+                const dateTag = s.publishedDate ? ` | Published: ${s.publishedDate}` : "";
+                const freshnessTag = s.freshnessScore !== undefined ? ` | Recency: ${(s.freshnessScore * 100).toFixed(0)}%` : "";
+                return `[Source ${i + 1}] ${s.title}\nURL: ${s.url}\nRelevance: ${(s.relevanceScore * 100).toFixed(0)}% | Credibility: ${(s.credibilityScore * 100).toFixed(0)}%${dateTag}${freshnessTag}\n${s.content.slice(0, 1200)}`;
+            })
             .join("\n\n---\n\n");
 
         const ragSection = ragContext ? `\n\n## Uploaded Document Context\n${ragContext}` : "";
         const citationList = rankedSources
             .slice(0, 6)
-            .map((s, i) => `[${i + 1}] [${s.title}](${s.url})`)
+            .map((s, i) => {
+                const dateNote = s.publishedDate ? ` — *Published: ${s.publishedDate}*` : "";
+                return `[${i + 1}] [${s.title}](${s.url})${dateNote}`;
+            })
             .join("\n");
 
         const synthesis = `## Research Results for: "${originalQuery}"
@@ -44,7 +48,7 @@ ${ragSection}
 ${citationList}
 
 ---
-*Research pipeline: multi-query search → deep fetch → credibility reranking → synthesis*`;
+*Research pipeline: multi-query search → deep fetch → credibility & recency reranking → synthesis*`;
 
         await saveResearchFindings([
             {
@@ -71,9 +75,14 @@ ${citationList}
             subQueriesUsed: subQueries,
             sources: rankedSources
                 .slice(0, 6)
-                .map((s) => ({ title: s.title, url: s.url, finalScore: s.finalScore })),
+                .map((s) => ({
+                    title: s.title,
+                    url: s.url,
+                    finalScore: s.finalScore,
+                    publishedDate: s.publishedDate,
+                })),
             confidence,
-            progress: `✍️ Synthesizing final answer with citations`,
+            progress: `✍️ Synthesized final answer with temporal citations`,
         };
     },
 });

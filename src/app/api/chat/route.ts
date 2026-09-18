@@ -1,11 +1,18 @@
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { NextRequest } from "next/server";
+import { RequestContext } from "@mastra/core/request-context";
+import {
+    DEFAULT_TIMEZONE,
+    evaluateFreshness,
+    getSystemTemporalContext,
+    isPureDateQuery,
+} from "@/lib/temporal";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
-function isResearchQuery(message: string): boolean {
+function isResearchQuery(message: string, timezone: string = DEFAULT_TIMEZONE): boolean {
     const lower = message.toLowerCase();
 
     const fileKeywords = [
@@ -15,6 +22,14 @@ function isResearchQuery(message: string): boolean {
         "list of", "show me the", "summarize the file", "summarise this file",
     ];
     if (fileKeywords.some((kw) => lower.includes(kw))) return false;
+
+    // Pure date inquiry doesn't need deep research workflow — agent responds immediately from clock
+    if (isPureDateQuery(message)) return false;
+
+    // Evaluate freshness: if query asks for recent, latest, breaking, or date-anchored events
+    const temporalCtx = getSystemTemporalContext(timezone);
+    const freshness = evaluateFreshness(message, temporalCtx);
+    if (freshness.isTimeSensitive) return true;
 
     const researchKeywords = [
         "research", "investigate", "analyse", "analyze", "deep dive",
@@ -31,7 +46,12 @@ export async function POST(req: NextRequest) {
     const session = await getServerSession(authOptions);
     const userEmail = session?.user?.email ?? session?.user?.name ?? "guest";
 
-    const { message, threadId, files, useResearch } = await req.json();
+    const body = await req.json();
+    const { message, threadId, files, useResearch } = body;
+    const userTimezone =
+        body.timezone ||
+        req.headers.get("x-timezone") ||
+        DEFAULT_TIMEZONE;
 
     if (!message?.trim()) {
         return new Response("Message is required", { status: 400 });
@@ -76,15 +96,15 @@ export async function POST(req: NextRequest) {
     const hasRagContext = ragContext.length > 0;
     const isFileQuestion =
         useResearch === false ||
-        (hasRagContext && !isResearchQuery(message) && useResearch !== true);
+        (hasRagContext && !isResearchQuery(message, userTimezone) && useResearch !== true);
 
     const shouldUseResearch =
-        !isFileQuestion && (useResearch === true || (useResearch !== false && isResearchQuery(message)));
+        !isFileQuestion && (useResearch === true || (useResearch !== false && isResearchQuery(message, userTimezone)));
 
     (async () => {
         try {
             if (isFileQuestion && hasRagContext) {
-                await streamAgent(agent, fullMessage, threadId, userEmail, writer, encoder);
+                await streamAgent(agent, fullMessage, threadId, userEmail, userTimezone, writer, encoder);
             } else if (shouldUseResearch) {
                 let inWorkflowThink = true;
                 await writer.write(encoder.encode("<think>\n🔍 Initializing deep research pipeline…\n"));
@@ -94,6 +114,7 @@ export async function POST(req: NextRequest) {
                     const run = await workflow.createRun();
 
                     // Watch for step completions and stream progress in real-time
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     run.watch((event: any) => {
                         if (
                             event.type === "workflow-step-result" &&
@@ -112,6 +133,7 @@ export async function POST(req: NextRequest) {
                             conversationId: threadId ?? "no-thread",
                             userEmail,
                             ragContext,
+                            timezone: userTimezone,
                         },
                     });
 
@@ -137,7 +159,7 @@ export async function POST(req: NextRequest) {
                             await writer.write(encoder.encode("</think>\n\n"));
                         }
                         // Workflow returned nothing useful — fall back to agent
-                        await streamAgent(agent, fullMessage, threadId, userEmail, writer, encoder);
+                        await streamAgent(agent, fullMessage, threadId, userEmail, userTimezone, writer, encoder);
                     }
                 } catch (workflowErr) {
                     console.error("Research workflow error, falling back to agent:", workflowErr);
@@ -148,11 +170,11 @@ export async function POST(req: NextRequest) {
                     await writer.write(
                         encoder.encode("*Research pipeline hit an issue — switching to direct agent mode.*\n\n")
                     );
-                    await streamAgent(agent, fullMessage, threadId, userEmail, writer, encoder);
+                    await streamAgent(agent, fullMessage, threadId, userEmail, userTimezone, writer, encoder);
                 }
             } else {
                 // ── Standard agent mode ──
-                await streamAgent(agent, fullMessage, threadId, userEmail, writer, encoder);
+                await streamAgent(agent, fullMessage, threadId, userEmail, userTimezone, writer, encoder);
             }
 
         } catch (err: unknown) {
@@ -189,12 +211,13 @@ export async function POST(req: NextRequest) {
     });
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function streamAgent(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     agent: any,
     message: string,
     threadId: string | undefined,
     resourceId: string,
+    timezone: string,
     writer: WritableStreamDefaultWriter,
     encoder: TextEncoder
 ) {
@@ -203,8 +226,12 @@ async function streamAgent(
         // Send initial immediate thinking state so the UI reacts instantly
         await writer.write(encoder.encode("<think>\n🧠 Analyzing request and formulating strategy…\n"));
 
+        const reqContext = new RequestContext();
+        reqContext.set("timezone", timezone);
+
         const response = await agent.stream(message, {
             maxSteps: 5,
+            requestContext: reqContext,
             memory: {
                 thread: threadId,
                 resource: resourceId,
@@ -212,6 +239,7 @@ async function streamAgent(
             modelSettings: {
                 maxOutputTokens: 2048,
             },
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             onStepFinish: async (step: any) => {
                 if (step.toolCalls && step.toolCalls.length > 0) {
                     for (const tc of step.toolCalls) {
@@ -224,7 +252,7 @@ async function streamAgent(
                         } else if (toolName === "webFetchTool" || toolName === "web_fetch") {
                             label = args.url ? `🌐 Deep reading: ${args.url}` : `🌐 Reading web page…`;
                         } else if (toolName === "sourceRerankTool" || toolName === "source_rerank") {
-                            label = `📊 Reranking sources for relevance and credibility…`;
+                            label = `📊 Reranking sources for relevance, credibility, and recency…`;
                         } else if (toolName === "exportReportTool" || toolName === "export_report") {
                             label = `📥 Generating and exporting report (${args.format || "csv"})…`;
                         } else if (toolName === "saveDigestTool" || toolName === "save_research_digest") {

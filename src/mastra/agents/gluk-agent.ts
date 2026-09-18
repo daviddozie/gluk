@@ -12,7 +12,8 @@ import { askFactCheckerTool } from "../tools/ask-fact-checker-tool";
 import { askCodeReviewerTool } from "../tools/ask-code-reviewer-tool";
 import { factCheckerAgent } from "./fact-checker-agent";
 import { codeReviewerAgent } from "./code-reviewer-agent";
-import { GLUK_INSTRUCTIONS } from "./gluk-instructions";
+import { buildGlukInstructions } from "./gluk-instructions";
+import { getSystemTemporalContext } from "@/lib/temporal";
 
 const openrouter = createOpenRouter({
     apiKey: process.env.OPENROUTER_API_KEY!,
@@ -32,7 +33,17 @@ const memory = new Memory({
 export const glukAgent = new Agent({
     id: "gluk_agent",
     name: "Gluk",
-    instructions: GLUK_INSTRUCTIONS,
+    instructions: ({ requestContext }) => {
+        let tz: string | undefined;
+        try {
+            if (requestContext && typeof requestContext.get === "function") {
+                tz = (requestContext.get("timezone") || requestContext.get("userTimezone")) as string | undefined;
+            }
+        } catch {
+            // fallback to default
+        }
+        return buildGlukInstructions(getSystemTemporalContext(tz));
+    },
     model: openrouter(process.env.OPENROUTER_MODEL || "deepseek/deepseek-chat"),
     tools: {
         webSearchTool,
