@@ -5,11 +5,13 @@ import { ArrowDown } from "lucide-react";
 import { Message } from "@/types/chat";
 import MessageBubble from "./message-bubble";
 import GlukLogo from "./svg";
+import { DocumentViewerFile } from "./document-viewer";
 
 interface ChatWindowProps {
   messages: Message[];
   isLoading?: boolean;
   theme: "light" | "dark";
+  onPreviewFile: (file: DocumentViewerFile) => void;
 }
 
 const SUGGESTIONS = [
@@ -19,7 +21,7 @@ const SUGGESTIONS = [
   { label: "Find the latest news on…", icon: "📰" },
 ];
 
-export default function ChatWindow({ messages, isLoading, theme }: ChatWindowProps) {
+export default function ChatWindow({ messages, isLoading, theme, onPreviewFile }: ChatWindowProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [showScrollButton, setShowScrollButton] = useState(false);
@@ -29,12 +31,13 @@ export default function ChatWindow({ messages, isLoading, theme }: ChatWindowPro
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
 
-  const handleScroll = useCallback(() => {
-    const el = scrollContainerRef.current;
-    if (!el) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    setShowScrollButton(distanceFromBottom > 120);
-  }, []);
+    const handleScroll = useCallback(() => {
+        const el = scrollContainerRef.current;
+        if (!el) return;
+        const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+        const shouldShow = distanceFromBottom > 120;
+        setShowScrollButton((current) => current === shouldShow ? current : shouldShow);
+    }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -90,7 +93,7 @@ export default function ChatWindow({ messages, isLoading, theme }: ChatWindowPro
       >
         <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
           {messages.map((message) => (
-            <MessageBubble key={message.id} message={message} theme={theme} />
+            <MessageBubble key={message.id} message={message} theme={theme} onPreviewFile={onPreviewFile} />
           ))}
           <div ref={bottomRef} />
         </div>

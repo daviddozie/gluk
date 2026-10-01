@@ -1,25 +1,44 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import Sidebar from "@/components/sidebar";
 import ChatWindow from "@/components/chat-window";
 import ChatWindowSkeleton from "@/components/chat-window-skeleton";
 import ChatInput, { AttachedFile } from "@/components/chat-input";
 import { Message, Conversation } from "@/types/chat";
 import { nanoid } from "nanoid";
-import ChatSkeleton from "@/components/chat-skeleton";
 import { Moon, Sun } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useChat } from "@/context/chat-context";
 import { useSession } from "next-auth/react";
 import LoginModal from "@/components/login-modal";
+import DocumentViewer, {
+  DocumentViewerFile,
+} from "@/components/document-viewer";
+import ResourcesLibrary from "@/components/resources-library";
+import WorkspacesHome from "@/components/workspaces-home";
+import WorkspaceDetail from "@/components/workspace/workspace-detail";
+import WorkspaceNotifications from "@/components/workspace/workspace-notifications";
+import { queryKeys } from "@/lib/queries/keys";
+import { ResourceReference } from "@/types/resource";
 
 interface ChatAppProps {
   initialConversationId?: string;
+  initialView?: "chat" | "resources" | "workspaces" | "workspace";
+  initialWorkspaceId?: string;
 }
 
-export default function ChatApp({ initialConversationId }: ChatAppProps) {
+export default function ChatApp({
+  initialConversationId,
+  initialView = "chat",
+  initialWorkspaceId,
+}: ChatAppProps) {
   const {
     conversations,
+    documentReference,
+    setDocumentReference,
     activeConversationId,
     activeConversation,
     isLoadingInitial,
@@ -41,12 +60,30 @@ export default function ChatApp({ initialConversationId }: ChatAppProps) {
   } = useChat();
 
   const abortControllerRef = useRef<AbortController | null>(null);
-  const { data: session, status } = useSession();
+  const requestedThreadIdRef = useRef<string | null>(null);
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const { status } = useSession();
   const isAuthenticated = status === "authenticated";
   const [showLoginModal, setShowLoginModal] = useState(false);
-  const [loginModalMode, setLoginModalMode] = useState<"prompt_limit" | "new_chat">("prompt_limit");
+  const [loginModalMode, setLoginModalMode] = useState<
+    "prompt_limit" | "new_chat"
+  >("prompt_limit");
+  const [previewFile, setPreviewFile] = useState<DocumentViewerFile | null>(
+    null,
+  );
+  const [activeView, setActiveView] = useState<
+    "chat" | "resources" | "workspaces" | "workspace"
+  >(initialView);
+
+  useEffect(
+    () => setActiveView(initialView),
+    [initialView, initialWorkspaceId],
+  );
 
   const handleNewChat = () => {
+    if (status === "loading") return;
+    setActiveView("chat");
     if (!isAuthenticated) {
       setLoginModalMode("new_chat");
       setShowLoginModal(true);
@@ -58,7 +95,10 @@ export default function ChatApp({ initialConversationId }: ChatAppProps) {
   // Check guest usage on mount
   useEffect(() => {
     if (status === "unauthenticated") {
-      const count = parseInt(localStorage.getItem("gluk_guest_prompt_count") || "0", 10);
+      const count = parseInt(
+        localStorage.getItem("gluk_guest_prompt_count") || "0",
+        10,
+      );
       if (count >= 3) {
         setLoginModalMode("prompt_limit");
         setShowLoginModal(true);
@@ -70,10 +110,15 @@ export default function ChatApp({ initialConversationId }: ChatAppProps) {
 
   // When initialConversationId is provided, ensure it is active and loaded
   useEffect(() => {
-    if (initialConversationId) {
+    if (
+      initialConversationId &&
+      status !== "loading" &&
+      requestedThreadIdRef.current !== initialConversationId
+    ) {
+      requestedThreadIdRef.current = initialConversationId;
       ensureThreadLoaded(initialConversationId);
     }
-  }, [initialConversationId, ensureThreadLoaded]);
+  }, [initialConversationId, status, ensureThreadLoaded]);
 
   const handleSend = async (content: string, files?: AttachedFile[]) => {
     const hasFiles = files && files.length > 0;
@@ -81,7 +126,10 @@ export default function ChatApp({ initialConversationId }: ChatAppProps) {
 
     // Check guest limit
     if (!isAuthenticated) {
-      const count = parseInt(localStorage.getItem("gluk_guest_prompt_count") || "0", 10);
+      const count = parseInt(
+        localStorage.getItem("gluk_guest_prompt_count") || "0",
+        10,
+      );
       if (count >= 3) {
         setLoginModalMode("prompt_limit");
         setShowLoginModal(true);
@@ -90,6 +138,10 @@ export default function ChatApp({ initialConversationId }: ChatAppProps) {
       localStorage.setItem("gluk_guest_prompt_count", String(count + 1));
     }
 
+    // Keep the selected resource attached to this first prompt, then clear the
+    // composer chip so it does not look like it will be sent with every prompt.
+    const promptReference = documentReference;
+
     let convId = activeConversationId;
     if (!convId) {
       convId = nanoid();
@@ -97,8 +149,12 @@ export default function ChatApp({ initialConversationId }: ChatAppProps) {
     }
 
     // Smoothly update address bar to /c/[convId] if starting from '/' - ONLY for authenticated users
-    if (isAuthenticated && typeof window !== "undefined" && !window.location.pathname.startsWith("/c/")) {
-      window.history.replaceState(null, "", `/c/${convId}`);
+    if (
+      isAuthenticated &&
+      typeof window !== "undefined" &&
+      !window.location.pathname.startsWith("/c/")
+    ) {
+      window.history.pushState(null, "", `/c/${convId}`);
     }
 
     const userMessage: Message = {
@@ -106,13 +162,32 @@ export default function ChatApp({ initialConversationId }: ChatAppProps) {
       role: "user",
       content,
       createdAt: new Date(),
-      files: files?.map((f) => ({
-        name: f.file.name,
-        type: f.file.type,
-        url: f.preview ?? "",
-      })),
+      files: [
+        ...(files?.map((f) => ({
+          name: f.file.name,
+          type: f.file.type,
+          url: f.preview ?? "",
+        })) ?? []),
+        ...(promptReference
+          ? [
+              {
+                name: promptReference.name,
+                type: promptReference.type,
+                url: promptReference.url,
+                isReference: true,
+                conversationId: promptReference.conversationId,
+              },
+            ]
+          : []),
+      ],
     };
-    const assistantMessage: Message = { id: nanoid(), role: "assistant", content: "", createdAt: new Date(), isStreaming: true };
+    const assistantMessage: Message = {
+      id: nanoid(),
+      role: "assistant",
+      content: "",
+      createdAt: new Date(),
+      isStreaming: true,
+    };
 
     const title = content.slice(0, 40) + (content.length > 40 ? "..." : "");
 
@@ -134,9 +209,10 @@ export default function ChatApp({ initialConversationId }: ChatAppProps) {
               title: c.messages.length === 0 ? title : c.title,
               messages: [...c.messages, userMessage, assistantMessage],
             }
-          : c
+          : c,
       );
     });
+    if (promptReference) setDocumentReference(null);
 
     setIsStreaming(true);
     abortControllerRef.current = new AbortController();
@@ -147,6 +223,7 @@ export default function ChatApp({ initialConversationId }: ChatAppProps) {
       if (files && files.length > 0) {
         const formData = new FormData();
         files.forEach((f) => formData.append("files", f.file));
+        formData.append("conversationId", convId!);
         const uploadRes = await fetch("/api/upload", {
           method: "POST",
           body: formData,
@@ -154,48 +231,81 @@ export default function ChatApp({ initialConversationId }: ChatAppProps) {
         if (uploadRes.ok) {
           const uploadData = await uploadRes.json();
           uploadedFiles = uploadData.files;
+          void queryClient.invalidateQueries({
+            queryKey: queryKeys.resources.all,
+          });
           setConversations((prev) =>
             prev.map((c) =>
               c.id === convId
                 ? {
-                  ...c,
-                  messages: c.messages.map((m) =>
-                    m.id === userMessage.id
-                      ? {
-                        ...m,
-                        files: uploadedFiles.map((f: { name: string; type: string; url: string }) => ({
-                          name: f.name,
-                          type: f.type,
-                          url: f.url,
-                        })),
-                      }
-                      : m
-                  ),
-                }
-                : c
-            )
+                    ...c,
+                    messages: c.messages.map((m) =>
+                      m.id === userMessage.id
+                        ? {
+                            ...m,
+                            files: [
+                              ...uploadedFiles.map(
+                                (f: {
+                                  name: string;
+                                  type: string;
+                                  url: string;
+                                }) => ({
+                                  name: f.name,
+                                  type: f.type,
+                                  url: f.url,
+                                }),
+                              ),
+                              ...(promptReference
+                                ? [
+                                    {
+                                      name: promptReference.name,
+                                      type: promptReference.type,
+                                      url: promptReference.url,
+                                      isReference: true,
+                                      conversationId:
+                                        promptReference.conversationId,
+                                    },
+                                  ]
+                                : []),
+                            ],
+                          }
+                        : m,
+                    ),
+                  }
+                : c,
+            ),
           );
         }
 
-        // Ingest documents into Pinecone (skip images)
-        const docFiles = files.filter((f) => !f.file.type.startsWith("image/"));
-        if (docFiles.length > 0) {
+        // Index documents and images before asking the chat model so image OCR and
+        // visual descriptions are available to retrieval for the first prompt.
+        if (files.length > 0) {
           const ingestForm = new FormData();
-          docFiles.forEach((f) => ingestForm.append("files", f.file));
+          files.forEach((f) => ingestForm.append("files", f.file));
           ingestForm.append("conversationId", convId!);
           try {
-            await fetch("/api/ingest", {
+            const ingestResponse = await fetch("/api/ingest", {
               method: "POST",
               body: ingestForm,
             });
+            if (!ingestResponse.ok) {
+              const errorBody = await ingestResponse.json().catch(() => null);
+              throw new Error(
+                errorBody?.error ?? "Could not process the attached file(s).",
+              );
+            }
           } catch (ingestErr) {
             console.error("Ingest failed:", ingestErr);
+            throw ingestErr;
           }
         }
       }
 
-      const chatMessage = content.trim() || "Please summarise and answer questions about the attached file(s).";
-      const clientTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Africa/Lagos";
+      const chatMessage =
+        content.trim() ||
+        "Please summarise and answer questions about the attached file(s).";
+      const clientTimezone =
+        Intl.DateTimeFormat().resolvedOptions().timeZone || "Africa/Lagos";
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -204,11 +314,21 @@ export default function ChatApp({ initialConversationId }: ChatAppProps) {
           threadId: convId,
           files: uploadedFiles,
           timezone: clientTimezone,
+          referenceResource: promptReference
+            ? { url: promptReference.url }
+            : undefined,
         }),
         signal: abortControllerRef.current.signal,
       });
 
-      if (!response.ok || !response.body) throw new Error("Failed to fetch");
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => null);
+        throw new Error(
+          errorBody?.error ?? "Failed to get a response. Please try again.",
+        );
+      }
+      if (!response.body)
+        throw new Error("The response stream was empty. Please try again.");
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -222,33 +342,60 @@ export default function ChatApp({ initialConversationId }: ChatAppProps) {
         setConversations((prev) =>
           prev.map((c) =>
             c.id === convId
-              ? { ...c, messages: c.messages.map((m) => m.id === assistantMessage.id ? { ...m, content: accumulated } : m) }
-              : c
-          )
+              ? {
+                  ...c,
+                  messages: c.messages.map((m) =>
+                    m.id === assistantMessage.id
+                      ? { ...m, content: accumulated }
+                      : m,
+                  ),
+                }
+              : c,
+          ),
         );
       }
 
       setConversations((prev) => {
         const updated = prev.map((c) =>
           c.id === convId
-            ? { ...c, messages: c.messages.map((m) => m.id === assistantMessage.id ? { ...m, isStreaming: false } : m) }
-            : c
+            ? {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === assistantMessage.id
+                    ? { ...m, isStreaming: false }
+                    : m,
+                ),
+              }
+            : c,
         );
         const updatedConv = updated.find((c) => c.id === convId);
         if (updatedConv) debounceSave(updatedConv);
         return updated;
       });
-
     } catch (err: unknown) {
-      const errorMsg = err instanceof Error && err.name === "AbortError"
-        ? "\n\n*Generation stopped.*"
-        : "Something went wrong. Please try again.";
+      const errorMsg =
+        err instanceof Error && err.name === "AbortError"
+          ? "\n\n*Generation stopped.*"
+          : err instanceof Error && err.message !== "Failed to fetch"
+            ? `\n\n*${err.message}*`
+            : "Something went wrong. Please try again.";
 
       setConversations((prev) => {
         const updated = prev.map((c) =>
           c.id === convId
-            ? { ...c, messages: c.messages.map((m) => m.id === assistantMessage.id ? { ...m, content: m.content + errorMsg, isStreaming: false } : m) }
-            : c
+            ? {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.id === assistantMessage.id
+                    ? {
+                        ...m,
+                        content: m.content + errorMsg,
+                        isStreaming: false,
+                      }
+                    : m,
+                ),
+              }
+            : c,
         );
         const updatedConv = updated.find((c) => c.id === convId);
         if (updatedConv) debounceSave(updatedConv);
@@ -258,7 +405,10 @@ export default function ChatApp({ initialConversationId }: ChatAppProps) {
       setIsStreaming(false);
       abortControllerRef.current = null;
       if (!isAuthenticated) {
-        const count = parseInt(localStorage.getItem("gluk_guest_prompt_count") || "0", 10);
+        const count = parseInt(
+          localStorage.getItem("gluk_guest_prompt_count") || "0",
+          10,
+        );
         if (count >= 3) {
           setLoginModalMode("prompt_limit");
           setShowLoginModal(true);
@@ -267,86 +417,125 @@ export default function ChatApp({ initialConversationId }: ChatAppProps) {
     }
   };
 
-  // Only show the full-page skeleton once when the entire application boots up for the first time
-  if (isLoadingInitial) {
-    return <ChatSkeleton />;
-  }
-
   const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
 
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden relative transition-colors duration-300">
-
+      <WorkspaceNotifications />
       {/* Mobile overlay */}
-      {sidebarOpen && isMobile && (
+      {isMobile && (
         <div
-          className="fixed inset-0 bg-black/60 z-20"
+          className={`fixed inset-0 z-20 bg-black/60 transition-opacity duration-300 ${sidebarOpen ? "opacity-100" : "opacity-0 pointer-events-none"}`}
           onClick={() => setSidebarOpen(false)}
+          aria-hidden="true"
         />
       )}
 
       {/* Sidebar — stays permanently mounted and cached */}
-      {sidebarOpen && (
-        <div className={`
-          z-30 w-65 shrink-0 h-full
-          ${isMobile ? "fixed top-0 left-0 bottom-0" : "relative"}
-        `}>
-          <Sidebar
-            conversations={conversations.filter((c) => c.messages.length > 0)}
-            activeConversationId={activeConversationId}
-            onSelect={selectConversation}
-            onNew={handleNewChat}
-            onDelete={deleteConversationById}
-            onPin={pinConversationById}
-            isOpen={sidebarOpen}
-            onToggle={() => setSidebarOpen((v) => !v)}
-            theme={theme}
-          />
-        </div>
-      )}
+      <div
+        className={`z-30 shrink-0 h-full overflow-hidden transition-[width,transform] duration-300 ease-in-out ${
+          isMobile
+            ? `fixed top-0 left-0 bottom-0 w-65 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`
+            : `relative ${sidebarOpen ? "w-65" : "w-[72px]"}`
+        }`}
+      >
+        <Sidebar
+          conversations={conversations.filter((c) => c.messages.length > 0)}
+          activeConversationId={activeConversationId}
+          onSelect={(id) => {
+            setActiveView("chat");
+            selectConversation(id);
+          }}
+          onNew={handleNewChat}
+          onResources={() => {
+            setActiveView("resources");
+            router.push("/resources", { scroll: false });
+            if (typeof window !== "undefined" && window.innerWidth < 768)
+              setSidebarOpen(false);
+          }}
+          onWorkspaces={() => {
+            setActiveView("workspaces");
+            router.push("/workspaces", { scroll: false });
+          }}
+          resourcesActive={activeView === "resources"}
+          workspacesActive={
+            activeView === "workspaces" || activeView === "workspace"
+          }
+          onDelete={deleteConversationById}
+          onPin={pinConversationById}
+          isOpen={sidebarOpen}
+          onToggle={() => setSidebarOpen((v) => !v)}
+          theme={theme}
+          isLoading={isLoadingInitial}
+          isAuthLoading={status === "loading"}
+        />
+      </div>
 
       {/* Main content — always full width on mobile */}
-      <div className="flex flex-col flex-1 min-w-0 w-full">
+      <div className="relative flex min-h-0 min-w-0 w-full flex-1 flex-col">
         {/* Top Header — permanently solid, never flickers */}
         <div className="flex items-center h-14 px-4 border-b border-border/60 transition-colors duration-300">
           <button
             onClick={() => setSidebarOpen((v) => !v)}
             className="mr-3 p-2 rounded-lg hover:bg-black/6 dark:hover:bg-white/6 cursor-pointer transition-colors shrink-0"
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
               <line x1="3" y1="6" x2="21" y2="6" />
               <line x1="3" y1="12" x2="21" y2="12" />
               <line x1="3" y1="18" x2="21" y2="18" />
             </svg>
           </button>
           <span className="text-sm font-medium text-foreground/70 truncate">
-            {activeConversation?.title ?? "New Chat"}
+            {activeView === "resources"
+              ? "Resources"
+              : activeView === "workspaces"
+                ? "Workspaces"
+                : activeView === "workspace"
+                  ? "Workspace"
+                  : (activeConversation?.title ?? "New Chat")}
           </span>
 
           <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
-            {!isAuthenticated && (
-              <div className="flex items-center gap-1.5 mr-1">
-                <a
-                  href="/login"
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors ${
-                    theme === "dark"
-                      ? "text-white/80 hover:text-white hover:bg-white/6"
-                      : "text-black/80 hover:text-black hover:bg-black/6"
-                  }`}
-                >
-                  Log in
-                </a>
-                <a
-                  href="/login"
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all shadow-sm ${
-                    theme === "dark"
-                      ? "bg-white text-black hover:bg-white/90"
-                      : "bg-black text-white hover:bg-black/90"
-                  }`}
-                >
-                  Sign up for free
-                </a>
+            {status === "loading" ? (
+              <div
+                className="mr-1 flex items-center gap-1.5"
+                aria-label="Loading account status"
+              >
+                <Skeleton className="h-7 w-12 rounded-lg" />
+                <Skeleton className="h-7 w-28 rounded-lg" />
               </div>
+            ) : (
+              status === "unauthenticated" && (
+                <div className="flex items-center gap-1.5 mr-1">
+                  <a
+                    href="/login"
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors ${
+                      theme === "dark"
+                        ? "text-white/80 hover:text-white hover:bg-white/6"
+                        : "text-black/80 hover:text-black hover:bg-black/6"
+                    }`}
+                  >
+                    Log in
+                  </a>
+                  <a
+                    href="/login"
+                    className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all shadow-sm ${
+                      theme === "dark"
+                        ? "bg-white text-black hover:bg-white/90"
+                        : "bg-black text-white hover:bg-black/90"
+                    }`}
+                  >
+                    Sign up for free
+                  </a>
+                </div>
+              )
             )}
 
             <button
@@ -366,7 +555,14 @@ export default function ChatApp({ initialConversationId }: ChatAppProps) {
               className="p-2 rounded-lg hover:bg-black/6 dark:hover:bg-white/6 cursor-pointer transition-colors shrink-0"
               title="New chat"
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
                 <path d="M12 5v14M5 12h14" />
               </svg>
             </button>
@@ -374,23 +570,73 @@ export default function ChatApp({ initialConversationId }: ChatAppProps) {
         </div>
 
         {/* Chat message area — uses scoped skeleton only if an uncached thread is being fetched */}
-        {isLoadingThread ? (
+        {activeView === "resources" ? (
+          <ResourcesLibrary
+            theme={theme}
+            onPreview={setPreviewFile}
+            onChatAbout={(resource) => {
+              setActiveView("chat");
+              const reference: ResourceReference = {
+                name: resource.name,
+                url: resource.url,
+                type: resource.type,
+                conversationId: resource.conversationId,
+              };
+              createNewConversation(reference);
+            }}
+          />
+        ) : activeView === "workspaces" ? (
+          <WorkspacesHome />
+        ) : activeView === "workspace" && initialWorkspaceId ? (
+          <WorkspaceDetail
+            workspaceId={initialWorkspaceId}
+            embedded
+            theme={theme}
+            onPreviewFile={setPreviewFile}
+          />
+        ) : isLoadingInitial || isLoadingThread ? (
           <ChatWindowSkeleton theme={theme} />
         ) : (
           <ChatWindow
             messages={activeConversation?.messages ?? []}
             isLoading={isStreaming}
             theme={theme}
+            onPreviewFile={setPreviewFile}
           />
         )}
 
         {/* Chat input — always interactive */}
-        <ChatInput
-          onSend={handleSend}
-          onAbort={() => abortControllerRef.current?.abort()}
-          isStreaming={isStreaming}
-          theme={theme}
-        />
+        {activeView === "chat" &&
+          (isLoadingInitial ? (
+            <div
+              className="px-4 pb-6 pt-2"
+              role="status"
+              aria-label="Loading chat composer"
+            >
+              <div className="mx-auto max-w-3xl">
+                <Skeleton className="h-13 w-full rounded-2xl" />
+              </div>
+            </div>
+          ) : (
+            <ChatInput
+              onSend={handleSend}
+              onAbort={() => abortControllerRef.current?.abort()}
+              isStreaming={isStreaming}
+              theme={theme}
+              referenceResource={documentReference}
+              onRemoveReference={() => setDocumentReference(null)}
+              onSelectResource={setDocumentReference}
+            />
+          ))}
+        {previewFile && (
+          <div className="absolute inset-0 z-40 flex min-h-0">
+            <DocumentViewer
+              file={previewFile}
+              onClose={() => setPreviewFile(null)}
+              theme={theme}
+            />
+          </div>
+        )}
       </div>
 
       {/* Login modal (either ChatGPT-style New Chat prompt or 3-prompt trial limit) */}

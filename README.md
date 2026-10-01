@@ -51,6 +51,8 @@ Gluk is an AI-powered research assistant you can chat with. Unlike a standard ch
 | **Database** | [Turso](https://turso.tech) (LibSQL) — conversations + research sessions |
 | **File storage** | [Cloudinary](https://cloudinary.com) |
 | **Auth** | [NextAuth v4](https://next-auth.js.org) — Google + GitHub |
+| **Server-state cache** | TanStack Query — conversations and user resources |
+| **Workspace real-time chat** | Supabase Realtime Broadcast and Presence; Turso-backed messages and unread cursors |
 | **UI** | React 19, Tailwind CSS v4, shadcn/ui, Lucide icons |
 | **Language** | TypeScript 5 |
 
@@ -60,7 +62,8 @@ Gluk is an AI-powered research assistant you can chat with. Unlike a standard ch
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 22.13+
+- A Supabase project with Realtime enabled for workspace chat
 - Accounts (all have free tiers): [OpenRouter](https://openrouter.ai), [Pinecone](https://pinecone.io), [Turso](https://turso.tech), [Cloudinary](https://cloudinary.com), [Tavily](https://tavily.com)
 - Google and/or GitHub OAuth app credentials
 
@@ -103,6 +106,11 @@ cp .env.example .env.local
 | `GOOGLE_CLIENT_SECRET` | Google Cloud Console |
 | `GITHUB_CLIENT_ID` | [github.com/settings/developers](https://github.com/settings/developers) |
 | `GITHUB_CLIENT_SECRET` | GitHub Developer Settings |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Supabase publishable API key; safe for browser use |
+| `SUPABASE_SECRET_KEY` | Supabase secret API key; server only |
+| `SUPABASE_REALTIME_JWT_KID` | `kid` of the ES256 signing key registered under Supabase Auth → JWT Signing Keys |
+| `SUPABASE_REALTIME_JWT_PRIVATE_JWK` | Private ES256 JWK used by Next.js to issue five-minute workspace-scoped tokens; server only |
 
 ### 4. Run the development server
 
@@ -112,7 +120,9 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-> **Tip:** To also run the Mastra Studio UI (agent inspector at `localhost:4111`), use `npm run dev:all` instead.
+Workspace chat uses Supabase Realtime and does not need a separate socket process or Redis. Set the Supabase variables in `.env.local`. Get the URL and publishable/secret API keys from the Supabase project dashboard. Generate an ES256 signing key with `supabase gen signing-key --algorithm ES256`, register the matching public JWK in Supabase Auth → JWT Signing Keys, activate it, then configure the key `kid` and private JWK on the server. Keep the secret API key and private JWK out of browser variables and source control. Apply `supabase/migrations/20260929000000_workspace_realtime.sql` in the Supabase SQL Editor; it authorizes private workspace message, ephemeral, and per-user read-cursor channels using short-lived member-scoped JWT claims. The app continues to store chat messages and unread read-cursors in Turso. Run `npm run dev:all` to start Next.js and Mastra Studio.
+
+Workspace Realtime carries saved-message broadcasts, presence, and typing only. The free Supabase tier has finite connection and message quotas; Realtime broadcast fan-out contributes usage per recipient, so monitor Realtime usage as workspaces grow. `@Gluk` replies are generated after the HTTP send response within the Next.js function lifetime; this is not a durable job queue.
 
 ---
 
@@ -122,14 +132,18 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 src/
 ├── app/
 │   ├── page.tsx                  # Main chat UI
+│   ├── resources/page.tsx         # User resource library
 │   ├── login/page.tsx            # Auth screen
 │   └── api/
 │       ├── chat/route.ts         # Streaming chat endpoint (RAG + agent + research)
 │       ├── ingest/route.ts       # Document → Pinecone embedding pipeline
 │       ├── upload/route.ts       # File → Cloudinary upload
 │       ├── conversations/        # CRUD for conversation history
+│       ├── resources/             # User resource listing and actions
 │       └── auth/                 # NextAuth handler
 ├── components/
+│   ├── query-provider.tsx        # App-wide TanStack Query client
+│   ├── resources-library.tsx     # Searchable grid/list resource views
 │   ├── chat-window.tsx           # Message list renderer
 │   ├── chat-input.tsx            # Input bar with file attachment support
 │   ├── message-bubble.tsx        # Per-message component (markdown + citations)
@@ -137,6 +151,7 @@ src/
 ├── lib/
 │   ├── auth.ts                   # NextAuth config
 │   ├── db.ts                     # Turso/LibSQL client
+│   ├── queries/                  # Query keys and server-state API functions
 │   ├── embeddings.ts             # HuggingFace embedding wrapper (soft-fail on errors)
 │   ├── vector-store.ts           # Pinecone store + hybrid search + MMR deduplication
 │   ├── document-processor.ts     # PDF/CSV/DOCX/TXT parser + semantic chunker
@@ -154,6 +169,13 @@ src/
 ```
 
 ---
+
+## Client Data Architecture
+
+- **TanStack Query** owns authenticated server state for conversations and uploaded resources. Query keys are scoped by user, and cache updates or invalidation follow server mutations.
+- **React Context** owns transient UI and in-progress chat state: active conversation, sidebar, theme, guest drafts, and streamed assistant messages.
+- **Direct fetch flows** remain for streamed AI responses, multipart uploads, and speech requests because they use response streams or file bodies.
+- **Server boundaries** remain Next.js API routes plus `src/lib` persistence/search helpers and Mastra agents/workflows. Client caching does not replace server-side authorization.
 
 ## �� How the Research Pipeline Works
 
@@ -200,7 +222,7 @@ To configure your model or limits:
 | Script | Description |
 |---|---|
 | `npm run dev` | Start Next.js dev server (Turbopack) |
-| `npm run dev:all` | Start Next.js + Mastra Studio concurrently |
+| `npm run dev:all` | Start Next.js and Mastra Studio concurrently |
 | `npm run mastra` | Start Mastra Studio only (`localhost:4111`) |
 | `npm run build` | Build for production |
 | `npm run start` | Run the production build |
@@ -217,3 +239,20 @@ Contributions are welcome! Please read [CONTRIBUTING.md](./CONTRIBUTING.md) for 
 ## 📄 License
 
 MIT — see [LICENSE](./LICENSE) for details.
+# Workspaces
+
+Signed-in users can create private workspaces at `/workspaces`. Workspace APIs
+authorize every request against the signed-in email's membership. Owners can
+invite people by email; invitations expire after seven days and can only be
+accepted by signing in with the invited email. Configure `RESEND_API_KEY` and
+`RESEND_FROM_EMAIL` to send invitations. If either setting is missing, the
+workspace page displays a copyable invitation link instead.
+
+Workspace chat is text-only. Mention `@Gluk` in a message to get an assistant
+reply in the shared conversation. Projects and workspace resource records are
+scoped to their workspace. Resource files are served through a member-checked
+endpoint; the underlying files still use the app's existing storage providers.
+Workspace chat uses private Supabase Realtime channels for live delivery,
+presence, typing indicators, and in-app message notices. Turso remains the
+durable source for messages and per-member unread cursors; there is no periodic
+message polling. Video calls and browser push notifications are not included.

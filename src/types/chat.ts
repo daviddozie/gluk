@@ -2,6 +2,8 @@ export interface MessageFile {
     name: string;
     type: string;
     url: string;
+    isReference?: boolean;
+    conversationId?: string | null;
 }
 
 export interface Message {

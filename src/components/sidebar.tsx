@@ -3,400 +3,689 @@
 import { useState } from "react";
 import { useSession } from "next-auth/react";
 import LogoutModal from "./logout-modal";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Conversation } from "@/types/chat";
 import GlukLogo from "./svg";
 import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuLabel,
-    DropdownMenuSeparator,
-    DropdownMenuTrigger,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
-import { Settings, HelpCircle, LogOut, ChevronUp, Pin, PinOff, Trash2, MoreHorizontal, Search, X } from "lucide-react";
+import {
+  Settings,
+  HelpCircle,
+  LogOut,
+  LogIn,
+  ChevronUp,
+  Pin,
+  PinOff,
+  Trash2,
+  MoreHorizontal,
+  Search,
+  X,
+  SquarePen,
+  FolderOpen,
+  UsersRound,
+} from "lucide-react";
 
 interface SidebarProps {
-    conversations: Conversation[];
-    activeConversationId: string | null;
-    onSelect: (id: string) => void;
-    onNew: () => void;
-    onDelete: (id: string) => void;
-    onPin: (id: string, pinned: boolean) => void;
-    isOpen: boolean;
-    onToggle: () => void;
-    theme: "light" | "dark";
+  conversations: Conversation[];
+  activeConversationId: string | null;
+  onSelect: (id: string) => void;
+  onNew: () => void;
+  onResources: () => void;
+  onWorkspaces: () => void;
+  resourcesActive: boolean;
+  workspacesActive: boolean;
+  onDelete: (id: string) => void;
+  onPin: (id: string, pinned: boolean) => void;
+  isOpen: boolean;
+  onToggle: () => void;
+  theme: "light" | "dark";
+  isLoading?: boolean;
+  isAuthLoading?: boolean;
 }
 
 export default function Sidebar({
-    conversations,
-    activeConversationId,
-    onSelect,
-    onNew,
-    onDelete,
-    onPin,
-    isOpen,
-    onToggle,
-    theme,
+  conversations,
+  activeConversationId,
+  onSelect,
+  onNew,
+  onResources,
+  onWorkspaces,
+  resourcesActive,
+  workspacesActive,
+  onDelete,
+  onPin,
+  isOpen,
+  onToggle,
+  theme,
+  isLoading = false,
+  isAuthLoading = false,
 }: SidebarProps) {
-    const { data: session } = useSession();
-    const [search, setSearch] = useState("");
-    const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
-    const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const { data: session } = useSession();
+  const [search, setSearch] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: string;
+    title: string;
+  } | null>(null);
+  const [showLogoutModal, setShowLogoutModal] = useState(false);
 
-    if (!isOpen) return null;
+  const isDark = theme === "dark";
 
-    const isDark = theme === "dark";
+  const filtered = search.trim()
+    ? conversations.filter((c) =>
+        c.title.toLowerCase().includes(search.toLowerCase()),
+      )
+    : conversations;
 
-    const filtered = search.trim()
-        ? conversations.filter((c) =>
-              c.title.toLowerCase().includes(search.toLowerCase())
-          )
-        : conversations;
+  const pinned = filtered.filter((c) => c.pinned);
+  const unpinned = filtered.filter((c) => !c.pinned);
 
-    const pinned   = filtered.filter((c) => c.pinned);
-    const unpinned = filtered.filter((c) => !c.pinned);
-
-    return (
-        <div className={`w-65 shrink-0 flex flex-col h-full transition-colors duration-300 ${
-            isDark ? "bg-[#111111] border-r border-white/6 text-white" : "bg-white border-r border-black/10 text-black"
-        }`}>
-            {/* Header */}
-            <div className={`flex items-center justify-between px-3 py-3 border-b transition-colors duration-300 ${
-                isDark ? "border-white/6" : "border-black/10"
-            }`}>
-                <div className="flex items-center gap-2">
-                    <div className={`w-7 h-7 flex items-center justify-center ${isDark ? "text-white" : "text-black"}`}>
-                        <GlukLogo size={28} />
-                    </div>
-                    <span className="font-semibold text-sm tracking-wide">Gluk</span>
-                </div>
-                <div className="flex items-center gap-1">
-                    <button
-                        onClick={onNew}
-                        className={`p-1.5 rounded-lg cursor-pointer transition-colors ${
-                            isDark ? "hover:bg-white/8 text-white/60 hover:text-white" : "hover:bg-black/6 text-black/60 hover:text-black"
-                        }`}
-                        title="New chat"
-                    >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M12 5v14M5 12h14" />
-                        </svg>
-                    </button>
-                    <button
-                        onClick={onToggle}
-                        className={`p-1.5 rounded-lg cursor-pointer transition-colors ${
-                            isDark ? "hover:bg-white/8 text-white/60 hover:text-white" : "hover:bg-black/6 text-black/60 hover:text-black"
-                        }`}
-                        title="Close sidebar"
-                    >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M15 18l-6-6 6-6" />
-                        </svg>
-                    </button>
-                </div>
+  return (
+    <div
+      className={`w-full min-w-0 shrink-0 flex flex-col h-full overflow-hidden transition-colors duration-300 ${
+        isDark
+          ? "bg-[#111111] border-r border-white/6 text-white"
+          : "bg-white border-r border-black/10 text-black"
+      }`}
+    >
+      {/* Header */}
+      {isOpen ? (
+        <div
+          className={`flex items-center justify-between px-3 py-3 border-b transition-colors duration-300 ${
+            isDark ? "border-white/6" : "border-black/10"
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <div
+              className={`w-7 h-7 flex items-center justify-center ${isDark ? "text-white" : "text-black"}`}
+            >
+              <GlukLogo size={28} />
             </div>
-
-            {/* Search field - Authenticated users only */}
-            {session?.user && (
-                <div className={`px-2 py-2 border-b transition-colors duration-300 ${isDark ? "border-white/6" : "border-black/10"}`}>
-                    <div className={`flex items-center gap-2 px-2.5 py-2 rounded-sm transition-colors ${
-                        isDark ? "bg-white/6 text-white/60" : "bg-black/5 text-black/50"
-                    }`}>
-                        <Search className="w-3.5 h-3.5 shrink-0" />
-                        <input
-                            type="text"
-                            value={search}
-                            onChange={(e) => setSearch(e.target.value)}
-                            placeholder="Search chats…"
-                            className={`flex-1 bg-transparent text-xs outline-none placeholder:text-current min-w-0 ${
-                                isDark ? "text-white" : "text-black"
-                            }`}
-                        />
-                        {search && (
-                            <button onClick={() => setSearch("")} className="shrink-0 opacity-60 hover:opacity-100 cursor-pointer transition-opacity">
-                                <X className="w-3 h-3" />
-                            </button>
-                        )}
-                    </div>
-                </div>
-            )}
-
-            {/* Conversations list - Authenticated users only */}
-            <div className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
-                {!session?.user ? null : filtered.length === 0 ? (
-                    <p className={`text-xs text-center mt-8 ${isDark ? "text-white/30" : "text-black/40"}`}>
-                        {search ? "No chats match your search" : "No conversations yet"}
-                    </p>
-                ) : (
-                    <>
-                        {/* Pinned section */}
-                        {pinned.length > 0 && (
-                            <>
-                                <p className={`px-3 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-widest ${
-                                    isDark ? "text-white/30" : "text-black/35"
-                                }`}>Pinned</p>
-                                {pinned.map((conv) => (
-                                    <ConvRow
-                                        key={conv.id}
-                                        conv={conv}
-                                        isActive={conv.id === activeConversationId}
-                                        isDark={isDark}
-                                        onSelect={onSelect}
-                                        onDelete={(id) => setDeleteTarget({ id, title: conv.title })}
-                                        onPin={onPin}
-                                    />
-                                ))}
-                                {unpinned.length > 0 && (
-                                    <p className={`px-3 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-widest ${
-                                        isDark ? "text-white/30" : "text-black/35"
-                                    }`}>Chats</p>
-                                )}
-                            </>
-                        )}
-
-                        {/* Unpinned section */}
-                        {unpinned.map((conv) => (
-                            <ConvRow
-                                key={conv.id}
-                                conv={conv}
-                                isActive={conv.id === activeConversationId}
-                                isDark={isDark}
-                                onSelect={onSelect}
-                                onDelete={(id) => setDeleteTarget({ id, title: conv.title })}
-                                onPin={onPin}
-                            />
-                        ))}
-                    </>
-                )}
-            </div>            {/* Footer */}
-            <div className={`p-2 border-t transition-colors duration-300 ${isDark ? "border-white/6" : "border-black/10"}`}>
-                {!session?.user ? (
-                    <div className={`p-3 rounded-xl border transition-colors ${
-                        isDark ? "bg-white/[0.04] border-white/8 text-white" : "bg-black/[0.03] border-black/8 text-black"
-                    }`}>
-                        <h4 className="text-xs font-semibold mb-1">Get responses tailored to you</h4>
-                        <p className={`text-[11px] leading-relaxed mb-3 ${isDark ? "text-white/50" : "text-black/50"}`}>
-                            Log in to get answers based on saved chats, plus upload files and unlock unlimited research.
-                        </p>
-                        <a
-                            href="/login"
-                            className={`w-full flex items-center justify-center py-2 px-3 rounded-lg text-xs font-semibold cursor-pointer transition-all shadow-sm ${
-                                isDark
-                                    ? "bg-white text-black hover:bg-white/90"
-                                    : "bg-black text-white hover:bg-black/90"
-                            }`}
-                        >
-                            Log in
-                        </a>
-                    </div>
-                ) : (
-                    <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                            <button className={`w-full flex items-center gap-2 px-2 py-2 rounded-lg cursor-pointer transition-colors group ${
-                                isDark ? "hover:bg-white/6" : "hover:bg-black/6"
-                            }`}>
-                                {session?.user?.image ? (
-                                    <img src={session.user.image} alt="avatar" className="w-7 h-7 rounded-full shrink-0" />
-                                ) : (
-                                    <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-xs font-semibold ${
-                                        isDark ? "bg-white/10 text-white" : "bg-black/10 text-black"
-                                    }`}>
-                                        {session?.user?.name?.[0]?.toUpperCase() ?? "U"}
-                                    </div>
-                                )}
-                                <div className="flex-1 text-left min-w-0">
-                                    <p className="text-xs font-medium truncate">{session?.user?.name ?? "User"}</p>
-                                </div>
-                                <ChevronUp className={`w-3.5 h-3.5 shrink-0 ${isDark ? "text-white/40" : "text-black/40"}`} />
-                            </button>
-                        </DropdownMenuTrigger>
-
-                        <DropdownMenuContent
-                            side="top"
-                            align="start"
-                            className={`w-60 mb-1 transition-colors duration-300 ${
-                                isDark ? "bg-[#1a1a1a] border-white/8 text-white" : "bg-white border-black/10 text-black"
-                            }`}
-                        >
-                            <DropdownMenuLabel className="py-2">
-                                <div className="flex items-center gap-2">
-                                    {session?.user?.image ? (
-                                        <img src={session.user.image} alt="avatar" className="w-8 h-8 rounded-full" />
-                                    ) : (
-                                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold ${
-                                            isDark ? "bg-white/10" : "bg-black/10"
-                                        }`}>
-                                            {session?.user?.name?.[0]?.toUpperCase() ?? "U"}
-                                        </div>
-                                    )}
-                                    <div className="min-w-0">
-                                        <p className="text-sm font-medium truncate">{session?.user?.name ?? "User"}</p>
-                                        <p className={`text-xs truncate ${isDark ? "text-white/40" : "text-black/50"}`}>
-                                            {session?.user?.email ?? ""}
-                                        </p>
-                                    </div>
-                                </div>
-                            </DropdownMenuLabel>
-
-                            <DropdownMenuSeparator className={isDark ? "bg-white/6" : "bg-black/10"} />
-
-                            <DropdownMenuItem className={`gap-2 cursor-pointer ${
-                                isDark ? "text-white/70 hover:text-white focus:text-white focus:bg-white/6" : "text-black/70 hover:text-black focus:text-black focus:bg-black/6"
-                            }`}>
-                                <Settings className="w-4 h-4" />
-                                Settings
-                            </DropdownMenuItem>
-
-                            <DropdownMenuItem className={`gap-2 cursor-pointer ${
-                                isDark ? "text-white/70 hover:text-white focus:text-white focus:bg-white/6" : "text-black/70 hover:text-black focus:text-black focus:bg-black/6"
-                            }`}>
-                                <HelpCircle className="w-4 h-4" />
-                                Help
-                            </DropdownMenuItem>
-
-                            <DropdownMenuSeparator className={isDark ? "bg-white/6" : "bg-black/10"} />
-
-                            <DropdownMenuItem
-                                onSelect={() => setShowLogoutModal(true)}
-                                onClick={() => setShowLogoutModal(true)}
-                                className={`gap-2 cursor-pointer ${
-                                    isDark ? "text-white/70 hover:text-white focus:text-white focus:bg-white/6" : "text-black/70 hover:text-black focus:text-black focus:bg-black/6"
-                                }`}
-                            >
-                                <LogOut className="w-4 h-4" />
-                                Log out
-                            </DropdownMenuItem>
-                        </DropdownMenuContent>
-                    </DropdownMenu>
-                )}
-            </div>
-            <Dialog open={deleteTarget !== null} onOpenChange={(open) => !open && setDeleteTarget(null)}>
-                <DialogContent className="sm:max-w-lg">
-                    <DialogHeader>
-                        <DialogTitle className="mb-4">Delete chat?</DialogTitle>
-                        <DialogDescription>
-                            Are you sure you want to delete <strong className={isDark ? "text-white/80" : "text-black/80"}>"{deleteTarget?.title}"</strong>?<br/><br/> This will permanently erase this chat.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <DialogFooter className="flex gap-2 justify-end sm:justify-end">
-                        <button
-                            onClick={() => setDeleteTarget(null)}
-                            className={`px-10 py-2 rounded-sm text-xs font-medium cursor-pointer transition-colors ${
-                                isDark ? "hover:bg-white/6 text-white/60 hover:text-white" : "hover:bg-black/6 text-black/60 hover:text-black"
-                            }`}
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            onClick={() => {
-                                if (deleteTarget) {
-                                    onDelete(deleteTarget.id);
-                                    setDeleteTarget(null);
-                                }
-                            }}
-                            className="px-10 py-2 rounded-sm text-xs font-semibold bg-red-500 hover:bg-red-600 text-white cursor-pointer transition-colors shadow-sm shadow-red-500/20"
-                        >
-                            Yes
-                        </button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-
-            {/* Logout Confirmation Modal */}
-            <LogoutModal
-                isOpen={showLogoutModal}
-                onClose={() => setShowLogoutModal(false)}
-                theme={theme}
-            />
+            <span className="font-semibold text-sm tracking-wide">Gluk</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={onNew}
+              className={`p-1.5 rounded-lg cursor-pointer transition-colors ${
+                isDark
+                  ? "hover:bg-white/8 text-white/60 hover:text-white"
+                  : "hover:bg-black/6 text-black/60 hover:text-black"
+              }`}
+              title="New chat"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+            </button>
+            <button
+              onClick={onToggle}
+              className={`p-1.5 rounded-lg cursor-pointer transition-colors ${
+                isDark
+                  ? "hover:bg-white/8 text-white/60 hover:text-white"
+                  : "hover:bg-black/6 text-black/60 hover:text-black"
+              }`}
+              title="Close sidebar"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M15 18l-6-6 6-6" />
+              </svg>
+            </button>
+          </div>
         </div>
-    );
+      ) : (
+        <div
+          className={`flex flex-col items-center gap-4 py-5 border-b transition-colors duration-300 ${isDark ? "border-white/6" : "border-black/10"}`}
+        >
+          <button
+            type="button"
+            onClick={onToggle}
+            className={`w-10 h-10 flex items-center justify-center rounded-lg cursor-pointer transition-colors ${isDark ? "text-white hover:bg-white/8" : "text-black hover:bg-black/6"}`}
+            title="Open sidebar"
+            aria-label="Open sidebar"
+          >
+            <GlukLogo size={34} />
+          </button>
+          {session?.user && (
+            <button
+              type="button"
+              onClick={onToggle}
+              className={`w-10 h-10 flex items-center justify-center rounded-lg cursor-pointer transition-colors ${isDark ? "text-white/60 hover:text-white hover:bg-white/8" : "text-black/55 hover:text-black hover:bg-black/6"}`}
+              title="Search chats"
+              aria-label="Open chat search"
+            >
+              <Search className="w-5 h-5" />
+            </button>
+          )}
+        </div>
+      )}
+
+      {isOpen && (
+        <div className="px-3 pt-3 pb-1">
+          <button
+            type="button"
+            onClick={onNew}
+            className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${isDark ? "text-white/80 hover:text-white hover:bg-white/8" : "text-black/80 hover:text-black hover:bg-black/6"}`}
+          >
+            <SquarePen className="w-4 h-4 shrink-0" />
+            <span>New chat</span>
+          </button>
+          <button
+            type="button"
+            onClick={onResources}
+            className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${resourcesActive ? (isDark ? "bg-white/10 text-white" : "bg-black/8 text-black") : isDark ? "text-white/65 hover:text-white hover:bg-white/8" : "text-black/65 hover:text-black hover:bg-black/6"}`}
+          >
+            <FolderOpen className="w-4 h-4 shrink-0" />
+            <span>Resources</span>
+          </button>
+          {session?.user && (
+            <button
+              type="button"
+              onClick={onWorkspaces}
+              className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${workspacesActive ? (isDark ? "bg-white/10 text-white" : "bg-black/8 text-black") : isDark ? "text-white/65 hover:text-white hover:bg-white/8" : "text-black/65 hover:text-black hover:bg-black/6"}`}
+            >
+              <UsersRound className="w-4 h-4 shrink-0" />
+              <span>Workspaces</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {!isOpen && (
+        <button
+          type="button"
+          onClick={onResources}
+          className={`mx-auto mt-3 flex h-10 w-10 items-center justify-center rounded-lg cursor-pointer transition-colors ${resourcesActive ? (isDark ? "bg-white/10 text-white" : "bg-black/8 text-black") : isDark ? "text-white/60 hover:bg-white/8 hover:text-white" : "text-black/60 hover:bg-black/6 hover:text-black"}`}
+          title="Resources"
+          aria-label="Resources"
+        >
+          <FolderOpen className="h-5 w-5" />
+        </button>
+      )}
+      {!isOpen && session?.user && (
+        <button
+          type="button"
+          onClick={onWorkspaces}
+          className={`mx-auto mt-1 flex h-10 w-10 items-center justify-center rounded-lg cursor-pointer transition-colors ${workspacesActive ? (isDark ? "bg-white/10 text-white" : "bg-black/8 text-black") : isDark ? "text-white/60 hover:bg-white/8 hover:text-white" : "text-black/60 hover:bg-black/6 hover:text-black"}`}
+          title="Workspaces"
+          aria-label="Workspaces"
+        >
+          <UsersRound className="h-5 w-5" />
+        </button>
+      )}
+
+      {/* Search field - Authenticated users only */}
+      {isOpen && session?.user && (
+        <div
+          className={`px-2 py-2 border-b transition-colors duration-300 ${isDark ? "border-white/6" : "border-black/10"}`}
+        >
+          <div
+            className={`flex items-center gap-2 px-2.5 py-2 rounded-sm transition-colors ${
+              isDark ? "bg-white/6 text-white/60" : "bg-black/5 text-black/50"
+            }`}
+          >
+            <Search className="w-3.5 h-3.5 shrink-0" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search chats…"
+              className={`flex-1 bg-transparent text-xs outline-none placeholder:text-current min-w-0 ${
+                isDark ? "text-white" : "text-black"
+              }`}
+            />
+            {search && (
+              <button
+                onClick={() => setSearch("")}
+                className="shrink-0 opacity-60 hover:opacity-100 cursor-pointer transition-opacity"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Conversations list - Authenticated users only */}
+      {isOpen && (
+        <div className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
+          {isLoading ? (
+            <div
+              className="space-y-4 px-3 py-3"
+              role="status"
+              aria-label="Loading conversations"
+            >
+              {["w-4/5", "w-3/5", "w-4/5", "w-2/3", "w-3/4", "w-1/2"].map(
+                (width, index) => (
+                  <div key={index} className="flex items-center gap-3">
+                    <Skeleton className="h-4 w-4 shrink-0 rounded" />
+                    <Skeleton className={`h-3 ${width}`} />
+                  </div>
+                ),
+              )}
+            </div>
+          ) : !session?.user ? null : filtered.length === 0 ? (
+            <p
+              className={`text-xs text-center mt-8 ${isDark ? "text-white/30" : "text-black/40"}`}
+            >
+              {search ? "No chats match your search" : "No conversations yet"}
+            </p>
+          ) : (
+            <>
+              {/* Pinned section */}
+              {pinned.length > 0 && (
+                <>
+                  <p
+                    className={`px-3 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-widest ${
+                      isDark ? "text-white/30" : "text-black/35"
+                    }`}
+                  >
+                    Pinned
+                  </p>
+                  {pinned.map((conv) => (
+                    <ConvRow
+                      key={conv.id}
+                      conv={conv}
+                      isActive={conv.id === activeConversationId}
+                      isDark={isDark}
+                      onSelect={onSelect}
+                      onDelete={(id) =>
+                        setDeleteTarget({ id, title: conv.title })
+                      }
+                      onPin={onPin}
+                    />
+                  ))}
+                  {unpinned.length > 0 && (
+                    <p
+                      className={`px-3 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-widest ${
+                        isDark ? "text-white/30" : "text-black/35"
+                      }`}
+                    >
+                      Chats
+                    </p>
+                  )}
+                </>
+              )}
+
+              {/* Unpinned section */}
+              {unpinned.map((conv) => (
+                <ConvRow
+                  key={conv.id}
+                  conv={conv}
+                  isActive={conv.id === activeConversationId}
+                  isDark={isDark}
+                  onSelect={onSelect}
+                  onDelete={(id) => setDeleteTarget({ id, title: conv.title })}
+                  onPin={onPin}
+                />
+              ))}
+            </>
+          )}
+        </div>
+      )}
+      {!isOpen && <div className="flex-1" />}
+      {/* Footer */}
+      <div
+        className={`p-2 border-t transition-colors duration-300 ${isDark ? "border-white/6" : "border-black/10"}`}
+      >
+        {isAuthLoading ? (
+          <div
+            className={`flex items-center ${isOpen ? "gap-2 px-2" : "justify-center"} py-2`}
+            role="status"
+            aria-label="Loading account"
+          >
+            <Skeleton className="h-7 w-7 shrink-0 rounded-full" />
+            {isOpen && <Skeleton className="h-3 flex-1 rounded" />}
+          </div>
+        ) : !session?.user ? (
+          !isOpen ? (
+            <button
+              onClick={() => window.location.assign("/login")}
+              className={`w-full flex justify-center py-2 rounded-lg ${isDark ? "text-white/70" : "text-black/70"}`}
+              title="Log in"
+              aria-label="Log in"
+            >
+              <LogIn className="w-5 h-5" />
+            </button>
+          ) : (
+            <div
+              className={`p-3 rounded-xl border transition-colors ${
+                isDark
+                  ? "bg-white/[0.04] border-white/8 text-white"
+                  : "bg-black/[0.03] border-black/8 text-black"
+              }`}
+            >
+              <h4 className="text-xs font-semibold mb-1">
+                Get responses tailored to you
+              </h4>
+              <p
+                className={`text-[11px] leading-relaxed mb-3 ${isDark ? "text-white/50" : "text-black/50"}`}
+              >
+                Log in to get answers based on saved chats, plus upload files
+                and unlock unlimited research.
+              </p>
+              <a
+                href="/login"
+                className={`w-full flex items-center justify-center py-2 px-3 rounded-lg text-xs font-semibold cursor-pointer transition-all shadow-sm ${
+                  isDark
+                    ? "bg-white text-black hover:bg-white/90"
+                    : "bg-black text-white hover:bg-black/90"
+                }`}
+              >
+                Log in
+              </a>
+            </div>
+          )
+        ) : (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                className={`w-full flex items-center ${isOpen ? "gap-2 px-2" : "justify-center px-0"} py-2 rounded-lg cursor-pointer transition-colors group ${
+                  isDark ? "hover:bg-white/6" : "hover:bg-black/6"
+                }`}
+                title={!isOpen ? (session?.user?.name ?? "Account") : undefined}
+                aria-label={!isOpen ? "Open account menu" : undefined}
+              >
+                {session?.user?.image ? (
+                  <img
+                    src={session.user.image}
+                    alt="avatar"
+                    className="w-7 h-7 rounded-full shrink-0"
+                  />
+                ) : (
+                  <div
+                    className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-xs font-semibold ${
+                      isDark
+                        ? "bg-white/10 text-white"
+                        : "bg-black/10 text-black"
+                    }`}
+                  >
+                    {session?.user?.name?.[0]?.toUpperCase() ?? "U"}
+                  </div>
+                )}
+                {isOpen && (
+                  <div className="flex-1 text-left min-w-0">
+                    <p className="text-xs font-medium truncate">
+                      {session?.user?.name ?? "User"}
+                    </p>
+                  </div>
+                )}
+                {isOpen && (
+                  <ChevronUp
+                    className={`w-3.5 h-3.5 shrink-0 ${isDark ? "text-white/40" : "text-black/40"}`}
+                  />
+                )}
+              </button>
+            </DropdownMenuTrigger>
+
+            <DropdownMenuContent
+              side="top"
+              align={isOpen ? "start" : "center"}
+              className={`w-60 mb-1 transition-colors duration-300 ${
+                isDark
+                  ? "bg-[#1a1a1a] border-white/8 text-white"
+                  : "bg-white border-black/10 text-black"
+              }`}
+            >
+              <DropdownMenuLabel className="py-2">
+                <div className="flex items-center gap-2">
+                  {session?.user?.image ? (
+                    <img
+                      src={session.user.image}
+                      alt="avatar"
+                      className="w-8 h-8 rounded-full"
+                    />
+                  ) : (
+                    <div
+                      className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold ${
+                        isDark ? "bg-white/10" : "bg-black/10"
+                      }`}
+                    >
+                      {session?.user?.name?.[0]?.toUpperCase() ?? "U"}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate">
+                      {session?.user?.name ?? "User"}
+                    </p>
+                    <p
+                      className={`text-xs truncate ${isDark ? "text-white/40" : "text-black/50"}`}
+                    >
+                      {session?.user?.email ?? ""}
+                    </p>
+                  </div>
+                </div>
+              </DropdownMenuLabel>
+
+              <DropdownMenuSeparator
+                className={isDark ? "bg-white/6" : "bg-black/10"}
+              />
+
+              <DropdownMenuItem
+                className={`gap-2 cursor-pointer ${
+                  isDark
+                    ? "text-white/70 hover:text-white focus:text-white focus:bg-white/6"
+                    : "text-black/70 hover:text-black focus:text-black focus:bg-black/6"
+                }`}
+              >
+                <Settings className="w-4 h-4" />
+                Settings
+              </DropdownMenuItem>
+
+              <DropdownMenuItem
+                className={`gap-2 cursor-pointer ${
+                  isDark
+                    ? "text-white/70 hover:text-white focus:text-white focus:bg-white/6"
+                    : "text-black/70 hover:text-black focus:text-black focus:bg-black/6"
+                }`}
+              >
+                <HelpCircle className="w-4 h-4" />
+                Help
+              </DropdownMenuItem>
+
+              <DropdownMenuSeparator
+                className={isDark ? "bg-white/6" : "bg-black/10"}
+              />
+
+              <DropdownMenuItem
+                onSelect={() => setShowLogoutModal(true)}
+                onClick={() => setShowLogoutModal(true)}
+                className={`gap-2 cursor-pointer ${
+                  isDark
+                    ? "text-white/70 hover:text-white focus:text-white focus:bg-white/6"
+                    : "text-black/70 hover:text-black focus:text-black focus:bg-black/6"
+                }`}
+              >
+                <LogOut className="w-4 h-4" />
+                Log out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>
+      <Dialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="mb-4">Delete chat?</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete{" "}
+              <strong className={isDark ? "text-white/80" : "text-black/80"}>
+                &quot;{deleteTarget?.title}&quot;
+              </strong>
+              ?<br />
+              <br /> This will permanently erase this chat.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex gap-2 justify-end sm:justify-end">
+            <button
+              onClick={() => setDeleteTarget(null)}
+              className={`px-10 py-2 rounded-sm text-xs font-medium cursor-pointer transition-colors ${
+                isDark
+                  ? "hover:bg-white/6 text-white/60 hover:text-white"
+                  : "hover:bg-black/6 text-black/60 hover:text-black"
+              }`}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                if (deleteTarget) {
+                  onDelete(deleteTarget.id);
+                  setDeleteTarget(null);
+                }
+              }}
+              className="px-10 py-2 rounded-sm text-xs font-semibold bg-red-500 hover:bg-red-600 text-white cursor-pointer transition-colors shadow-sm shadow-red-500/20"
+            >
+              Yes
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Logout Confirmation Modal */}
+      <LogoutModal
+        isOpen={showLogoutModal}
+        onClose={() => setShowLogoutModal(false)}
+        theme={theme}
+      />
+    </div>
+  );
 }
 
 /* ─── Per-conversation row with hover 3-dot menu ─── */
 
 interface ConvRowProps {
-    conv: Conversation;
-    isActive: boolean;
-    isDark: boolean;
-    onSelect: (id: string) => void;
-    onDelete: (id: string) => void;
-    onPin: (id: string, pinned: boolean) => void;
+  conv: Conversation;
+  isActive: boolean;
+  isDark: boolean;
+  onSelect: (id: string) => void;
+  onDelete: (id: string) => void;
+  onPin: (id: string, pinned: boolean) => void;
 }
 
-function ConvRow({ conv, isActive, isDark, onSelect, onDelete, onPin }: ConvRowProps) {
-    return (
-        <div
-            className={`group flex items-center justify-between rounded-lg px-3 py-2 cursor-pointer transition-colors ${
-                isActive
-                    ? (isDark ? "bg-white/10 text-white" : "bg-black/8 text-black")
-                    : (isDark ? "text-white/60 hover:bg-white/6 hover:text-white" : "text-black/60 hover:bg-black/6 hover:text-black")
+function ConvRow({
+  conv,
+  isActive,
+  isDark,
+  onSelect,
+  onDelete,
+  onPin,
+}: ConvRowProps) {
+  return (
+    <div
+      className={`group flex items-center justify-between rounded-lg px-3 py-2 cursor-pointer transition-colors ${
+        isActive
+          ? isDark
+            ? "bg-white/10 text-white"
+            : "bg-black/8 text-black"
+          : isDark
+            ? "text-white/60 hover:bg-white/6 hover:text-white"
+            : "text-black/60 hover:bg-black/6 hover:text-black"
+      }`}
+      onClick={() => onSelect(conv.id)}
+    >
+      {/* Title */}
+      <div className="flex items-center gap-2 min-w-0 flex-1">
+        {conv.pinned ? (
+          <Pin className="w-3.5 h-3.5 shrink-0 opacity-50" />
+        ) : (
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            className="shrink-0 opacity-50"
+          >
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+        )}
+        <span className="text-xs truncate">{conv.title}</span>
+      </div>
+
+      {/* 3-dot menu — visible on hover / when active */}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            onClick={(e) => e.stopPropagation()}
+            className={`opacity-0 group-hover:opacity-100 p-1 rounded cursor-pointer transition-all shrink-0 focus:opacity-100 ${
+              isDark
+                ? "hover:bg-white/10 text-white/50 hover:text-white"
+                : "hover:bg-black/10 text-black/40 hover:text-black"
             }`}
-            onClick={() => onSelect(conv.id)}
+            title="More options"
+          >
+            <MoreHorizontal className="w-3.5 h-3.5" />
+          </button>
+        </DropdownMenuTrigger>
+
+        <DropdownMenuContent
+          side="right"
+          align="start"
+          onClick={(e) => e.stopPropagation()}
+          className={`w-44 ${isDark ? "bg-[#1a1a1a] border-white/8 text-white" : "bg-white border-black/10 text-black"}`}
         >
-            {/* Title */}
-            <div className="flex items-center gap-2 min-w-0 flex-1">
-                {conv.pinned ? (
-                    <Pin className="w-3.5 h-3.5 shrink-0 opacity-50" />
-                ) : (
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 opacity-50">
-                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                    </svg>
-                )}
-                <span className="text-xs truncate">{conv.title}</span>
-            </div>
+          <DropdownMenuItem
+            onSelect={() => onPin(conv.id, !conv.pinned)}
+            onClick={(e) => e.stopPropagation()}
+            className={`gap-2 cursor-pointer text-xs ${
+              isDark
+                ? "text-white/70 hover:text-white focus:text-white focus:bg-white/6"
+                : "text-black/70 hover:text-black focus:text-black focus:bg-black/6"
+            }`}
+          >
+            {conv.pinned ? (
+              <PinOff className="w-3.5 h-3.5" />
+            ) : (
+              <Pin className="w-3.5 h-3.5" />
+            )}
+            {conv.pinned ? "Unpin chat" : "Pin chat"}
+          </DropdownMenuItem>
 
-            {/* 3-dot menu — visible on hover / when active */}
-            <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                    <button
-                        onClick={(e) => e.stopPropagation()}
-                        className={`opacity-0 group-hover:opacity-100 p-1 rounded cursor-pointer transition-all shrink-0 focus:opacity-100 ${
-                            isDark ? "hover:bg-white/10 text-white/50 hover:text-white" : "hover:bg-black/10 text-black/40 hover:text-black"
-                        }`}
-                        title="More options"
-                    >
-                        <MoreHorizontal className="w-3.5 h-3.5" />
-                    </button>
-                </DropdownMenuTrigger>
+          <DropdownMenuSeparator
+            className={isDark ? "bg-white/6" : "bg-black/10"}
+          />
 
-                <DropdownMenuContent
-                    side="right"
-                    align="start"
-                    onClick={(e) => e.stopPropagation()}
-                    className={`w-44 ${isDark ? "bg-[#1a1a1a] border-white/8 text-white" : "bg-white border-black/10 text-black"}`}
-                >
-                    <DropdownMenuItem
-                        onSelect={() => onPin(conv.id, !conv.pinned)}
-                        onClick={(e) => e.stopPropagation()}
-                        className={`gap-2 cursor-pointer text-xs ${
-                            isDark ? "text-white/70 hover:text-white focus:text-white focus:bg-white/6" : "text-black/70 hover:text-black focus:text-black focus:bg-black/6"
-                        }`}
-                    >
-                        {conv.pinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
-                        {conv.pinned ? "Unpin chat" : "Pin chat"}
-                    </DropdownMenuItem>
-
-                    <DropdownMenuSeparator className={isDark ? "bg-white/6" : "bg-black/10"} />
-
-                    <DropdownMenuItem
-                        onSelect={() => onDelete(conv.id)}
-                        onClick={(e) => e.stopPropagation()}
-                        className="gap-2 cursor-pointer text-xs text-red-400 hover:text-red-300 focus:text-red-300 focus:bg-red-500/10"
-                    >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        Delete chat
-                    </DropdownMenuItem>
-                </DropdownMenuContent>
-            </DropdownMenu>
-        </div>
-    );
+          <DropdownMenuItem
+            onSelect={() => onDelete(conv.id)}
+            onClick={(e) => e.stopPropagation()}
+            className="gap-2 cursor-pointer text-xs text-red-400 hover:text-red-300 focus:text-red-300 focus:bg-red-500/10"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            Delete chat
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
 }
-

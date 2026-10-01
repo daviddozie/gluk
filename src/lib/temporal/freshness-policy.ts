@@ -1,9 +1,3 @@
-/**
- * Freshness policy and query intent classifier for Gluk.
- * Determines whether a query is a direct date/time inquiry, a time-sensitive
- * research query requiring live web search, or an evergreen topic.
- */
-
 import { TemporalContext, getSystemTemporalContext } from "./system-clock";
 import {
     ResolvedTemporalQuery,
@@ -12,17 +6,11 @@ import {
 } from "./relative-resolver";
 
 export interface FreshnessEvaluation {
-    /** True if the user is asking strictly about the calendar date, time, or day */
     isPureDateQuery: boolean;
-    /** True if the query asks for current, recent, breaking, or date-anchored information */
     isTimeSensitive: boolean;
-    /** True if web search should be explicitly triggered */
     shouldUseWebSearch: boolean;
-    /** The temporal resolution of any relative expressions found in the query */
     temporalResolution: ResolvedTemporalQuery;
-    /** Suggested Tavily time_range parameter (day, week, month, year) */
     suggestedTimeRange?: TavilyTimeRange;
-    /** Explanation for why this policy was selected */
     reason: string;
 }
 

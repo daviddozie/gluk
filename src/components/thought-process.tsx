@@ -3,7 +3,6 @@
 import { useState, useEffect, useMemo } from "react";
 import {
     Brain,
-    Sparkles,
     ChevronDown,
     Search,
     Globe,
@@ -12,7 +11,6 @@ import {
     Database,
     Send,
     Check,
-    Loader2,
     CheckCircle2,
 } from "lucide-react";
 
@@ -66,21 +64,7 @@ function getStepIcon(type: ProcessStep["iconType"], status: ProcessStep["status"
 
 export default function ThoughtProcess({ thoughtText, isThinking, isDark }: ThoughtProcessProps) {
     const [isExpanded, setIsExpanded] = useState(isThinking);
-    const [elapsedSeconds, setElapsedSeconds] = useState(0);
     const [fallbackIndex, setFallbackIndex] = useState(0);
-
-    // Track elapsed time during active thinking
-    useEffect(() => {
-        if (!isThinking) return;
-
-        const start = Date.now();
-        const interval = setInterval(() => {
-            const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-            setElapsedSeconds(parseFloat(elapsed));
-        }, 100);
-
-        return () => clearInterval(interval);
-    }, [isThinking]);
 
     // Cycle through intelligent hints if no raw thought lines have arrived yet
     useEffect(() => {
@@ -137,13 +121,9 @@ export default function ThoughtProcess({ thoughtText, isThinking, isDark }: Thou
         });
     }, [thoughtText, isThinking]);
 
-    const activeStepText = steps.length > 0
-        ? steps[steps.length - 1].text
-        : FALLBACK_THINKING_MESSAGES[fallbackIndex];
-
     return (
         <div
-            className={`w-full mb-3 rounded-xl border transition-all duration-300 overflow-hidden ${
+            className={`w-full max-w-2xl mb-3 rounded-xl border transition-all duration-300 overflow-hidden ${
                 isDark
                     ? "bg-white/[0.03] border-white/8 hover:border-white/12"
                     : "bg-black/[0.02] border-black/8 hover:border-black/12"
@@ -170,28 +150,13 @@ export default function ThoughtProcess({ thoughtText, isThinking, isDark }: Thou
                     )}
 
                     <span className="truncate">
-                        {isThinking ? (
-                            <span className="font-semibold text-purple-400 dark:text-purple-300">
-                                Thinking ({elapsedSeconds > 0 ? `${elapsedSeconds}s` : "..."}):{" "}
-                                <span className={`font-normal ${isDark ? "text-white/60" : "text-black/60"}`}>
-                                    {activeStepText}
-                                </span>
-                            </span>
-                        ) : (
-                            <span>
-                                Thought {elapsedSeconds > 0 ? `for ${elapsedSeconds}s` : "process"}
-                                {steps.length > 0 && ` • ${steps.length} step${steps.length > 1 ? "s" : ""}`}
-                            </span>
-                        )}
+                        <span>
+                            Thought process · {Math.max(steps.length, isThinking ? 1 : 0)} {Math.max(steps.length, isThinking ? 1 : 0) === 1 ? "step" : "steps"}
+                        </span>
                     </span>
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0">
-                    {isThinking && (
-                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                            Active
-                        </span>
-                    )}
                     <ChevronDown
                         className={`w-3.5 h-3.5 transition-transform duration-200 opacity-60 ${
                             isExpanded ? "rotate-180" : "rotate-0"
@@ -203,18 +168,18 @@ export default function ThoughtProcess({ thoughtText, isThinking, isDark }: Thou
             {/* Collapsible Timeline Content */}
             {isExpanded && (
                 <div
-                    className={`px-3.5 pb-3 pt-1 text-xs border-t transition-colors ${
+                    className={`px-3.5 py-2 text-xs border-t transition-colors ${
                         isDark ? "border-white/6 bg-black/20 text-white/70" : "border-black/6 bg-black/[0.01] text-black/70"
                     }`}
                 >
                     {steps.length === 0 ? (
-                        <div className="flex items-center gap-2 py-1.5 opacity-70">
+                        <div className="flex items-center gap-2 opacity-70">
                             <Brain className="w-3.5 h-3.5 animate-pulse text-purple-400" />
-                            <span>{FALLBACK_THINKING_MESSAGES[fallbackIndex]}</span>
+                            <span className="truncate">{FALLBACK_THINKING_MESSAGES[fallbackIndex]}</span>
                         </div>
                     ) : (
-                        <div className="space-y-2 mt-1">
-                            {steps.map((step) => {
+                        <div className="space-y-1">
+                            {(isThinking ? [steps[steps.length - 1]] : steps).map((step) => {
                                 const isRunning = step.status === "running";
                                 return (
                                     <div

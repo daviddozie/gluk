@@ -74,7 +74,9 @@ export async function storeDocumentChunks(chunks: DocumentChunk[]) {
 export async function searchSimilarChunks(
     query: string,
     conversationId: string,
-    topK = 6
+    topK = 6,
+    fileName?: string,
+    userEmail?: string
 ): Promise<{ text: string; fileName: string; score: number }[]> {
     const index = getIndex();
     const queryEmbedding = await embedText(query);
@@ -88,7 +90,11 @@ export async function searchSimilarChunks(
         topK: fetchK,
         includeMetadata: true,
         filter: {
-            conversationId: { $eq: conversationId },
+            $and: [
+                { conversationId: { $eq: conversationId } },
+                ...(fileName ? [{ fileName: { $eq: fileName } }] : []),
+                ...(userEmail ? [{ userEmail: { $eq: userEmail } }] : []),
+            ],
         },
     });
 
@@ -182,6 +188,7 @@ export async function deleteConversationChunks(
     await index.deleteMany({
         filter: {
             conversationId: { $eq: conversationId },
+            userEmail: { $eq: userEmail },
         },
     });
 }
@@ -189,13 +196,15 @@ export async function deleteConversationChunks(
 // Delete chunks for a specific file in a conversation (prevent orphans on re-indexing)
 export async function deleteFileChunks(
     conversationId: string,
-    fileName: string
+    fileName: string,
+    userEmail?: string
 ) {
     const index = getIndex();
     await index.deleteMany({
         filter: {
             conversationId: { $eq: conversationId },
             fileName: { $eq: fileName },
+            ...(userEmail ? { userEmail: { $eq: userEmail } } : {}),
         },
     });
 }
