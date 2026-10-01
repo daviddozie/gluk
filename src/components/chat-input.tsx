@@ -1,13 +1,18 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Paperclip, X, FileText, Sheet, File, Mic, MicOff } from "lucide-react";
+import { Plus, X, Mic, LibraryBig, Paperclip, FolderOpen } from "lucide-react";
+import { FileIcon, getFileCategory } from "@public/svg/icon";
+import FilePreviewModal from "./file-preview-modal";
+import { ResourceReference } from "@/types/resource";
+import { ResourcePickerDialog } from "@/components/resources/resource-picker-dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 export interface AttachedFile {
     id: string;
     file: File;
     preview?: string;
-    type: "image" | "pdf" | "csv" | "txt" | "other";
+    type: "image" | "pdf" | "csv" | "doc" | "txt" | "other";
     status: "uploading" | "done" | "error";
     progress: number;
 }
@@ -17,101 +22,145 @@ interface ChatInputProps {
     onAbort: () => void;
     isStreaming: boolean;
     theme: "light" | "dark";
+    referenceResource?: ResourceReference | null;
+    onRemoveReference?: () => void;
+    onSelectResource?: (resource: ResourceReference) => void;
 }
 
 function getFileType(file: File): AttachedFile["type"] {
     if (file.type.startsWith("image/")) return "image";
-    if (file.type === "application/pdf") return "pdf";
-    if (file.type === "text/csv" || file.name.endsWith(".csv")) return "csv";
-    if (file.type === "text/plain" || file.name.endsWith(".txt")) return "txt";
+    const name = file.name.toLowerCase();
+    if (file.type === "application/pdf" || name.endsWith(".pdf")) return "pdf";
+    if (file.type === "text/csv" || name.endsWith(".csv")) return "csv";
+    if (
+        file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+        file.type === "application/msword" ||
+        name.endsWith(".docx") ||
+        name.endsWith(".doc") ||
+        name.endsWith(".odt") ||
+        name.endsWith(".rtf")
+    ) {
+        return "doc";
+    }
+    if (file.type === "text/plain" || name.endsWith(".txt") || name.endsWith(".md") || name.endsWith(".markdown")) {
+        return "txt";
+    }
     return "other";
 }
 
-function FileTypeIcon({ type }: { type: AttachedFile["type"] }) {
-    if (type === "pdf") return <FileText className="w-5 h-5 text-red-400" />;
-    if (type === "csv") return <Sheet className="w-5 h-5 text-green-400" />;
-    if (type === "txt") return <FileText className="w-5 h-5 text-blue-400" />;
-    return <File className="w-5 h-5 text-white/60" />;
-}
 
 function CircularProgress({ progress }: { progress: number }) {
-    const radius = 20;
+    const radius = 7;
     const circumference = 2 * Math.PI * radius;
     const offset = circumference - (progress / 100) * circumference;
 
     return (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-xl">
-            <svg width="48" height="48" className="-rotate-90">
-                <circle cx="24" cy="24" r={radius} fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="3" />
+        <div className="relative flex items-center justify-center w-5 h-5">
+            <svg width="18" height="18" className="-rotate-90">
+                <circle cx="9" cy="9" r={radius} fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="2" />
                 <circle
-                    cx="24" cy="24" r={radius}
-                    fill="none" stroke="white" strokeWidth="3"
+                    cx="9" cy="9" r={radius}
+                    fill="none" stroke="currentColor" strokeWidth="2"
                     strokeDasharray={circumference}
                     strokeDashoffset={offset}
                     strokeLinecap="round"
                     style={{ transition: "stroke-dashoffset 0.3s ease" }}
                 />
             </svg>
-            <span className="absolute text-[10px] font-medium text-white">{progress}%</span>
         </div>
     );
 }
 
-function FilePreviewChip({ file, onRemove }: { file: AttachedFile; onRemove: () => void }) {
+function FilePreviewChip({
+    file,
+    onRemove,
+    onPreview,
+    isDark,
+}: {
+    file: AttachedFile;
+    onRemove: () => void;
+    onPreview?: () => void;
+    isDark: boolean;
+}) {
+    const isImg = file.type === "image";
+    const ext = file.file.name.split(".").pop()?.toUpperCase() || file.type.toUpperCase();
+
     return (
-        <div className="relative group flex-shrink-0">
-            <div className="w-16 h-16 rounded-xl overflow-hidden border border-white/[0.1] bg-white/[0.05] flex items-center justify-center">
-                {file.type === "image" && file.preview ? (
-                    <img src={file.preview} alt={file.file.name} className="w-full h-full object-cover" />
+        <div
+            className={`relative group flex items-center gap-3 px-3.5 py-2.5 rounded-2xl border transition-all duration-300 max-w-[280px] sm:max-w-[320px] flex-shrink-0 ${
+                isDark
+                    ? "bg-white/[0.06] border-white/10 text-white"
+                    : "bg-black/[0.04] border-black/10 text-black"
+            }`}
+        >
+            <div
+                onClick={onPreview}
+                className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer"
+            >
+                {isImg && file.preview ? (
+                    <div className="w-8 h-8 rounded-lg overflow-hidden shrink-0 border border-white/10">
+                        <img src={file.preview} alt={file.file.name} className="w-full h-full object-cover" />
+                    </div>
                 ) : (
-                    <div className="flex flex-col items-center gap-1 px-1">
-                        <FileTypeIcon type={file.type} />
-                        <span className="text-[9px] text-white/40 truncate w-full text-center">
-                            {file.type.toUpperCase()}
-                        </span>
+                    <div className="shrink-0 flex items-center justify-center">
+                        <FileIcon fileName={file.file.name} fileType={file.file.type} size={26} />
                     </div>
                 )}
 
-                {file.status === "uploading" && <CircularProgress progress={file.progress} />}
-
-                {file.status === "error" && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-red-500/40 rounded-xl">
-                        <X className="w-5 h-5 text-red-300" />
-                    </div>
-                )}
-
-                {file.status === "done" && (
-                    <div className="absolute bottom-1 right-1 w-4 h-4 rounded-full bg-green-500 flex items-center justify-center">
-                        <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
-                            <path d="M20 6L9 17l-5-5" />
-                        </svg>
-                    </div>
-                )}
+                <div className="flex flex-col min-w-0 flex-1 text-left">
+                    <span className="text-xs font-medium truncate block">
+                        {file.file.name}
+                    </span>
+                    <span
+                        className={`text-[10px] uppercase tracking-wider font-medium ${
+                            isDark ? "text-white/40" : "text-black/40"
+                        }`}
+                    >
+                        {ext}
+                    </span>
+                </div>
             </div>
 
-            <div className="absolute -bottom-5 left-0 right-0 text-center">
-                <span className="text-[9px] text-white/40 truncate block max-w-[64px]">
-                    {file.file.name.length > 8 ? file.file.name.slice(0, 7) + "…" : file.file.name}
-                </span>
-            </div>
+            {/* Uploading progress spinner */}
+            {file.status === "uploading" && (
+                <div className="shrink-0 ml-1">
+                    <CircularProgress progress={file.progress} />
+                </div>
+            )}
 
+            {/* Error badge */}
+            {file.status === "error" && (
+                <div className="shrink-0 ml-1 w-5 h-5 rounded-full bg-red-500/20 text-red-400 flex items-center justify-center">
+                    <X className="w-3.5 h-3.5" />
+                </div>
+            )}
+
+            {/* Remove button */}
             {file.status !== "uploading" && (
                 <button
+                    type="button"
                     onClick={onRemove}
-                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-white/20 hover:bg-white/40 flex items-center justify-center opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity"
+                    className={`shrink-0 ml-1 w-5 h-5 rounded-full flex items-center justify-center cursor-pointer transition-colors ${
+                        isDark
+                            ? "text-white/40 hover:text-white/90 hover:bg-white/10"
+                            : "text-black/40 hover:text-black/90 hover:bg-black/10"
+                    }`}
+                    title="Remove file"
                 >
-                    <X className="w-2.5 h-2.5 text-white" />
+                    <X className="w-3.5 h-3.5" />
                 </button>
             )}
         </div>
     );
 }
 
-export default function ChatInput({ onSend, onAbort, isStreaming, theme }: ChatInputProps) {
+export default function ChatInput({ onSend, onAbort, isStreaming, theme, referenceResource, onRemoveReference, onSelectResource }: ChatInputProps) {
     const [input, setInput] = useState("");
     const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+    const [previewFile, setPreviewFile] = useState<{ name: string; url?: string; type?: string } | null>(null);
     const [isRecording, setIsRecording] = useState(false);
     const [isTranscribing, setIsTranscribing] = useState(false);
+    const [resourcePickerOpen, setResourcePickerOpen] = useState(false);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -334,24 +383,40 @@ export default function ChatInput({ onSend, onAbort, isStreaming, theme }: ChatI
     return (
         <div className="px-3 sm:px-4 pb-4 sm:pb-6 pt-2">
             <div className="max-w-3xl mx-auto">
-                <div className={`border rounded-2xl focus-within:ring-1 transition-all duration-300 ${
+                <div className={`border rounded-xl focus-within:ring-1 transition-all duration-300 ${
                     isDark
                         ? "bg-white/5 border-white/10 focus-within:border-white/20 focus-within:ring-white/10"
                         : "bg-black/4 border-black/12 focus-within:border-black/25 focus-within:ring-black/10"
                 }`}>
 
-                    {attachedFiles.length > 0 && (
-                        <div className="flex gap-3 px-4 pt-3 pb-1 flex-wrap">
+                    {(attachedFiles.length > 0 || referenceResource) && (
+                        <div className="flex gap-2.5 px-4 pt-3 pb-1 flex-wrap">
+                            {referenceResource && (
+                                <div className={`flex max-w-[280px] items-center gap-2 rounded-2xl border px-3 py-2 sm:max-w-[320px] ${isDark ? "border-blue-400/20 bg-blue-400/8 text-white" : "border-blue-600/20 bg-blue-500/5 text-black"}`}>
+                                    {getFileCategory(referenceResource.name, referenceResource.type) === "image" ? (
+                                        <img src={referenceResource.url} alt={referenceResource.name} className="h-8 w-8 shrink-0 rounded-lg object-cover" />
+                                    ) : (
+                                        <FileIcon fileName={referenceResource.name} fileType={referenceResource.type} size={25} />
+                                    )}
+                                    <span className="min-w-0 flex-1 truncate text-xs" title={`Reference: ${referenceResource.name}`}>{referenceResource.name}</span>
+                                    {onRemoveReference && <button type="button" onClick={onRemoveReference} className={`rounded-full p-1 cursor-pointer ${isDark ? "text-white/50 hover:bg-white/10 hover:text-white" : "text-black/50 hover:bg-black/10 hover:text-black"}`} aria-label="Remove document reference"><X className="h-3.5 w-3.5" /></button>}
+                                </div>
+                            )}
                             {attachedFiles.map((f) => (
-                                <FilePreviewChip key={f.id} file={f} onRemove={() => removeFile(f.id)} />
+                                <FilePreviewChip
+                                    key={f.id}
+                                    file={f}
+                                    onRemove={() => removeFile(f.id)}
+                                    onPreview={() => setPreviewFile({ name: f.file.name, url: f.preview, type: f.file.type })}
+                                    isDark={isDark}
+                                />
                             ))}
                         </div>
                     )}
 
-                    <div className={`flex items-end gap-2 px-3 sm:px-4 py-3 ${attachedFiles.length > 0 ? "pt-6" : ""}`}>
+                    <div className="flex items-end gap-2 px-3 sm:px-4 py-3">
 
                         {isRecording ? (
-                            /* ── Waveform recording UI ── */
                             <>
                                 <div className="flex-1 flex items-center h-10 overflow-hidden">
                                     <canvas
@@ -392,23 +457,42 @@ export default function ChatInput({ onSend, onAbort, isStreaming, theme }: ChatI
                         ) : (
                             /* ── Normal input UI ── */
                             <>
-                                <button
-                                    onClick={() => fileInputRef.current?.click()}
-                                    disabled={isStreaming || isTranscribing}
-                                    className={`flex-shrink-0 p-1.5 rounded-lg cursor-pointer transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
-                                        isDark
-                                            ? "text-white/40 hover:text-white/80 hover:bg-white/8"
-                                            : "text-black/40 hover:text-black/80 hover:bg-black/8"
-                                    }`}
-                                    title="Attach file"
-                                >
-                                    <Paperclip className="w-4 h-4" />
-                                </button>
+                                <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                        <button
+                                            type="button"
+                                            disabled={isStreaming || isTranscribing}
+                                            className={`flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-30 ${isDark ? "text-white/55 hover:bg-white/10 hover:text-white" : "text-black/55 hover:bg-black/8 hover:text-black"}`}
+                                            title="Open attachment options"
+                                            aria-label="Open attachment options"
+                                        >
+                                            <Plus className="h-5 w-5" />
+                                        </button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="start" side="top" sideOffset={12} className={`w-[min(24rem,calc(100vw-2rem))] rounded-2xl p-2.5 shadow-2xl ${isDark ? "border-white/8 bg-[#252525] text-white" : "border-black/8 bg-white text-black"}`}>
+                                        <DropdownMenuItem
+                                            onSelect={() => fileInputRef.current?.click()}
+                                            className={`h-12 cursor-pointer gap-3 rounded-xl px-3 ${isDark ? "focus:bg-white/8" : "focus:bg-black/5"}`}
+                                        >
+                                            <Paperclip className="h-5 w-5 shrink-0" />
+                                            <span className="font-medium">Add photos &amp; files</span>
+                                            <span className={`ml-auto text-xs ${isDark ? "text-white/45" : "text-black/45"}`}>From computer</span>
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem
+                                            onSelect={() => setResourcePickerOpen(true)}
+                                            className={`h-12 cursor-pointer gap-3 rounded-xl px-3 ${isDark ? "focus:bg-white/8" : "focus:bg-black/5"}`}
+                                        >
+                                            <FolderOpen className="h-5 w-5 shrink-0" />
+                                            <span className="font-medium">Add from resources</span>
+                                            <span className={`ml-auto text-xs ${isDark ? "text-white/45" : "text-black/45"}`}>Browse your files</span>
+                                        </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                </DropdownMenu>
 
                                 <button
                                     onClick={startRecording}
                                     disabled={isStreaming || isTranscribing}
-                                    className={`flex-shrink-0 p-1.5 rounded-lg cursor-pointer transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
+                                    className={`flex-shrink-0 p-2 rounded-full cursor-pointer transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
                                         isTranscribing
                                             ? isDark ? "text-white/30 animate-pulse" : "text-black/30 animate-pulse"
                                             : isDark
@@ -417,7 +501,7 @@ export default function ChatInput({ onSend, onAbort, isStreaming, theme }: ChatI
                                     }`}
                                     title={isTranscribing ? "Transcribing…" : "Voice input"}
                                 >
-                                    <Mic className="w-4 h-4" />
+                                    <Mic className="w-5 h-5" />
                                 </button>
 
                                 <textarea
@@ -437,7 +521,7 @@ export default function ChatInput({ onSend, onAbort, isStreaming, theme }: ChatI
                                     {isStreaming ? (
                                         <button
                                             onClick={onAbort}
-                                            className={`flex items-center justify-center w-8 h-8 rounded-lg border cursor-pointer transition-all ${
+                                            className={`flex items-center justify-center w-8 h-8 rounded-full border cursor-pointer transition-all ${
                                                 isDark
                                                     ? "bg-white/10 hover:bg-white/20 border-white/20 text-white"
                                                     : "bg-black/8 hover:bg-black/15 border-black/20 text-black"
@@ -451,7 +535,7 @@ export default function ChatInput({ onSend, onAbort, isStreaming, theme }: ChatI
                                         <button
                                             onClick={handleSend}
                                             disabled={!canSend}
-                                            className={`flex items-center justify-center w-8 h-8 rounded-lg transition-all ${
+                                            className={`flex items-center justify-center w-8 h-8 rounded-full transition-all ${
                                                 canSend
                                                     ? (isDark ? "bg-white text-black hover:bg-white/90" : "bg-black text-white hover:bg-black/85")
                                                     : (isDark ? "bg-white/10 text-white/30 cursor-not-allowed" : "bg-black/8 text-black/30 cursor-not-allowed")
@@ -483,6 +567,22 @@ export default function ChatInput({ onSend, onAbort, isStreaming, theme }: ChatI
                 onChange={handleFileChange}
                 className="hidden"
             />
+
+            {previewFile && (
+                <FilePreviewModal
+                    file={previewFile}
+                    onClose={() => setPreviewFile(null)}
+                    theme={theme}
+                />
+            )}
+            {onSelectResource && (
+                <ResourcePickerDialog
+                    open={resourcePickerOpen}
+                    onOpenChange={setResourcePickerOpen}
+                    theme={theme}
+                    onSelect={onSelectResource}
+                />
+            )}
         </div>
     );
 }

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Script from "next/script";
 import { Geist, Geist_Mono } from "next/font/google";
 import AuthProvider from "@/components/auth-provider";
+import QueryProvider from "@/components/query-provider";
 import { ChatProvider } from "@/context/chat-context";
 import "./globals.css";
 
@@ -102,10 +103,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased`}
       >
+        <Script id="theme-init" strategy="beforeInteractive">
+          {`(function(){try{var saved=localStorage.getItem("theme");var dark=saved==="dark"||(saved!=="light"&&window.matchMedia("(prefers-color-scheme: dark)").matches);var root=document.documentElement;root.classList.toggle("dark",dark);root.style.colorScheme=dark?"dark":"light";}catch(_){}})();`}
+        </Script>
         <Script
           id="json-ld"
           type="application/ld+json"
@@ -119,7 +123,9 @@ export default function RootLayout({
         </div>
 
         <AuthProvider>
-          <ChatProvider>{children}</ChatProvider>
+          <QueryProvider>
+            <ChatProvider>{children}</ChatProvider>
+          </QueryProvider>
         </AuthProvider>
       </body>
     </html>

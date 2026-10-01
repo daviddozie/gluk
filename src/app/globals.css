@@ -164,7 +164,6 @@ html.theme-transition *::after {
 
 /* Typing indicator bounce */
 @keyframes bounce {
-
   0%,
   100% {
     transform: translateY(0);
@@ -179,8 +178,22 @@ html.theme-transition *::after {
   animation: bounce 0.8s ease-in-out infinite;
 }
 
-@keyframes pulse {
+@keyframes typing-bounce {
+  0%, 60%, 100% {
+    transform: translateY(0);
+    opacity: 0.35;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
 
+.animate-typing-dot {
+  animation: typing-bounce 1.2s infinite ease-in-out;
+}
+
+@keyframes pulse {
   0%,
   100% {
     opacity: 1;
@@ -195,6 +208,53 @@ html.theme-transition *::after {
   animation: pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
+/* A traveling highlight keeps the assistant's current activity visibly alive. */
+.thinking-shine {
+  display: inline-block;
+  background-size: 220% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: thinking-shine 2.2s ease-in-out infinite;
+}
+
+.thinking-shine-dark {
+  background-image: linear-gradient(
+    100deg,
+    rgb(255 255 255 / 48%) 25%,
+    #fff 48%,
+    rgb(255 255 255 / 48%) 72%
+  );
+  filter: drop-shadow(0 0 5px rgb(255 255 255 / 20%));
+}
+
+.thinking-shine-light {
+  background-image: linear-gradient(
+    100deg,
+    rgb(0 0 0 / 42%) 25%,
+    #111 48%,
+    rgb(0 0 0 / 42%) 72%
+  );
+  filter: drop-shadow(0 0 5px rgb(0 0 0 / 14%));
+}
+
+@keyframes thinking-shine {
+  0% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: -120% 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thinking-shine {
+    animation: none;
+    background-position: 50% 50%;
+  }
+}
+
 /* Textarea scrollbar */
 textarea::-webkit-scrollbar {
   width: 3px;
@@ -202,7 +262,6 @@ textarea::-webkit-scrollbar {
 
 /* Streaming cursor pulse */
 @keyframes pulse {
-
   0%,
   100% {
     opacity: 1;
@@ -220,6 +279,12 @@ textarea::-webkit-scrollbar {
 @layer base {
   * {
     @apply border-border outline-ring/50;
+  }
+  button:not(:disabled),
+  a[href],
+  [role="tab"],
+  select {
+    cursor: pointer;
   }
   body {
     @apply bg-background text-foreground;

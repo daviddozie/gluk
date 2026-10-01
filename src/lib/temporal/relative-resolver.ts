@@ -1,9 +1,3 @@
-/**
- * Resolves relative temporal expressions (e.g., "today", "yesterday", "this week",
- * "last week", "this month", "recently", "latest", "current") against the actual
- * runtime system clock.
- */
-
 import { TemporalContext, getSystemTemporalContext } from "./system-clock";
 
 export type TavilyTimeRange = "day" | "week" | "month" | "year";
@@ -64,10 +58,6 @@ function formatDateISO(d: Date, tz: string): string {
     return `${y}-${m}-${day}`;
 }
 
-/**
- * Calculates concrete calendar windows for all relative temporal ranges
- * anchored to the runtime temporal context.
- */
 export function getRelativeTimeWindows(context: TemporalContext): RelativeTimeWindows {
     const tz = context.timezone;
     const now = context.now;
@@ -175,10 +165,6 @@ export function getRelativeTimeWindows(context: TemporalContext): RelativeTimeWi
     };
 }
 
-/**
- * Parses a natural language query and resolves any relative or explicit temporal
- * expressions against the current runtime context.
- */
 export function resolveQueryTemporalExpressions(
     query: string,
     context: TemporalContext = getSystemTemporalContext()

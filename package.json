@@ -20,10 +20,14 @@
     "@nanostores/react": "ai/react",
     "@openrouter/ai-sdk-provider": "^2.2.3",
     "@pinecone-database/pinecone": "^7.1.0",
+    "@supabase/supabase-js": "^2.109.0",
+    "@tanstack/react-query": "^5.104.0",
+    "@vercel/blob": "^2.8.0",
     "ai": "3.4.33",
     "class-variance-authority": "^0.7.1",
     "cloudinary": "^2.9.0",
     "clsx": "^2.1.1",
+    "jose": "^6.2.12",
     "lucide": "^0.577.0",
     "lucide-react": "^0.577.0",
     "mammoth": "^1.11.0",
@@ -56,6 +60,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "tailwindcss": "^4",
+    "tsx": "^4.23.0",
     "typescript": "^5"
   },
   "ignoreScripts": [

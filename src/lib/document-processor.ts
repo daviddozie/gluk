@@ -1,3 +1,5 @@
+import { chunkText } from "@/lib/text-chunking";
+
 export interface ProcessedDocument {
     text: string;
     name: string;
@@ -10,57 +12,6 @@ export interface ProcessedDocument {
     };
 }
 
-
-function chunkText(
-    text: string,
-    targetChunkSize = 600,
-    overlap = 80
-): string[] {
-    // First split into natural paragraphs
-    const paragraphs = text
-        .split(/\n{2,}/)
-        .map((p) => p.replace(/\s+/g, " ").trim())
-        .filter((p) => p.length > 20);
-
-    const chunks: string[] = [];
-    let buffer: string[] = [];
-    let bufferWordCount = 0;
-
-    const flush = () => {
-        if (buffer.length === 0) return;
-        const chunk = buffer.join(" ").trim();
-        if (chunk.length > 30) chunks.push(chunk);
-        // Keep overlap words from the end
-        const allWords = chunk.split(/\s+/);
-        buffer = [allWords.slice(-overlap).join(" ")];
-        bufferWordCount = Math.min(overlap, allWords.length);
-    };
-
-    for (const para of paragraphs) {
-        const words = para.split(/\s+/);
-
-        if (words.length > targetChunkSize * 1.5) {
-            const sentences = para.match(/[^.!?]+[.!?]+/g) ?? [para];
-            for (const sentence of sentences) {
-                const sentWords = sentence.trim().split(/\s+/);
-                if (bufferWordCount + sentWords.length > targetChunkSize) {
-                    flush();
-                }
-                buffer.push(sentence.trim());
-                bufferWordCount += sentWords.length;
-            }
-        } else {
-            if (bufferWordCount + words.length > targetChunkSize) {
-                flush();
-            }
-            buffer.push(para);
-            bufferWordCount += words.length;
-        }
-    }
-
-    flush();
-    return chunks;
-}
 
 export async function processDocument(
     buffer: Buffer,
@@ -130,3 +81,94 @@ export async function processDocument(
         },
     };
 }
+
+export const REFERENCE_CONTEXT_MAX_CHARS = 24_000;
+const REFERENCE_QUERY_STOP_WORDS = new Set([
+    "what", "which", "where", "when", "who", "why", "how", "this", "that",
+    "document", "file", "about", "tell", "please", "could", "would", "does",
+    "the", "and", "for", "with", "from"
+]);
+
+export function selectReferenceContext(
+    chunks: string[],
+    query: string,
+    maxChars = REFERENCE_CONTEXT_MAX_CHARS
+): string {
+    const queryTerms = new Set(
+        (query.toLowerCase().match(/[a-z0-9]{3,}/g) ?? [])
+            .filter((term) => !REFERENCE_QUERY_STOP_WORDS.has(term))
+    );
+    const ranked = chunks.map((text, index) => {
+        const terms = text.toLowerCase().match(/[a-z0-9]{3,}/g) ?? [];
+        let score = 0;
+        for (const term of terms) if (queryTerms.has(term)) score++;
+        return { text, index, score };
+    });
+    const relevant = queryTerms.size === 0 || ranked.every((chunk) => chunk.score === 0)
+        ? ranked.slice(0, 10)
+        : [...ranked].sort((a, b) => b.score - a.score || a.index - b.index).slice(0, 10);
+    if (ranked.length > 0 && !relevant.some((chunk) => chunk.index === 0)) relevant.push(ranked[0]);
+
+    let remaining = maxChars;
+    return relevant
+        .sort((a, b) => a.index - b.index)
+        .map(({ text }) => {
+            if (remaining <= 0) return "";
+            const excerpt = text.slice(0, remaining);
+            remaining -= excerpt.length;
+            return excerpt;
+        })
+        .filter(Boolean)
+        .join("\n\n");
+}
+
+export async function fetchOwnedResourceBuffer(url: string): Promise<Buffer> {
+    const parsed = new URL(url);
+    const isCloudinary = parsed.protocol === "https:" && parsed.hostname === "res.cloudinary.com";
+    const isVercelBlob = parsed.protocol === "https:" && parsed.hostname.endsWith(".public.blob.vercel-storage.com");
+    if (!isCloudinary && !isVercelBlob) throw new Error("Unsupported resource storage host");
+
+    const response = await fetch(url, { cache: "no-store", redirect: "error", signal: AbortSignal.timeout(20_000) });
+    if (!response.ok || !response.body) throw new Error("Resource download failed");
+    const maxBytes = 15 * 1024 * 1024;
+    const declaredLength = Number(response.headers.get("content-length") ?? 0);
+    if (declaredLength > maxBytes) throw new Error("Resource is larger than the 15 MB chat limit");
+
+    const reader = response.body.getReader();
+    const parts: Uint8Array[] = [];
+    let byteLength = 0;
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        byteLength += value.byteLength;
+        if (byteLength > maxBytes) {
+            await reader.cancel();
+            throw new Error("Resource is larger than the 15 MB chat limit");
+        }
+        parts.push(value);
+    }
+    return Buffer.concat(parts.map((part) => Buffer.from(part)));
+}
+
+const parsedDocumentCache = new Map<string, { doc: ProcessedDocument; timestamp: number }>();
+const CACHE_TTL_MS = 15 * 60 * 1000;
+
+export async function getOrProcessResourceDocument(
+    url: string,
+    fileName: string,
+    mimeType: string
+): Promise<ProcessedDocument> {
+    const cached = parsedDocumentCache.get(url);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+        return cached.doc;
+    }
+    const buffer = await fetchOwnedResourceBuffer(url);
+    const doc = await processDocument(buffer, fileName, mimeType);
+    parsedDocumentCache.set(url, { doc, timestamp: Date.now() });
+    if (parsedDocumentCache.size > 50) {
+        const oldestKey = parsedDocumentCache.keys().next().value;
+        if (oldestKey) parsedDocumentCache.delete(oldestKey);
+    }
+    return doc;
+}
+
